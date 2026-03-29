@@ -98,7 +98,7 @@ pip install pandas numpy openpyxl
 
 Si utilizas este código, por favor cita el artículo asociado y el repositorio:
 
-> [Autores]. Dinámica Epidemiológica y Tendencias de la Carga Hospitalaria por Cáncer Gástrico en Chile (2018–2022): Un Análisis de Regresión Joinpoint Ajustado al Censo 2024. [Revista, año]. DOI: [pendiente]
+> [Autores]. Dinámica Epidemiológica y Tendencias de la Carga Hospitalaria por Cáncer Gástrico en Chile (2018–2022): Un Análisis de Regresión Joinpoint Ajustado al Censo 2024. [Revista, año]. DOI: [pendiente]. Código disponible en: https://doi.org/10.5281/zenodo.19322588
 
 ---
 
