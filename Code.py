@@ -396,7 +396,7 @@ def _process_segment(df_seg: pd.DataFrame,
                      year_label: str) -> list[dict]:
     """Build count rows for one sex × year segment."""
     results = []
-    n_total = len(df_seg)
+    n_total = int(df_seg['WEIGHT'].sum().round())
 
     # Grand total
     results.append({'SEX': sex_label, 'VARIABLE': 'GRAND_TOTAL',
@@ -405,7 +405,7 @@ def _process_segment(df_seg: pd.DataFrame,
 
     # ── Quinquennia (weighted) ────────────────────────────────
     counts_q = (df_seg.groupby('QUINQUENNIUM')['WEIGHT']
-                .sum().round(0).astype(int))
+            .sum())
     counts_q = counts_q.reindex(
         [q for q in QUINQUENNIA_ORDER if q in counts_q.index],
         fill_value=0)
@@ -514,26 +514,21 @@ def build_counts_table(df_exp: pd.DataFrame) -> pd.DataFrame:
 # SECTION 7 — TABLE 1: CRUDE RATES
 # ─────────────────────────────────────────────────────────────
 
-def _get_cases(df_exp: pd.DataFrame,
+def _get_cases(df: pd.DataFrame,
                sex_filter: str | None,
                age_group: str | None) -> pd.Series:
-    """
-    Return weighted case counts by year for a given
-    sex × age-group stratum.
 
-    Parameters
-    ----------
-    sex_filter  : 'MALE' | 'FEMALE' | None (= all)
-    age_group   : '0-14' | '15-64' | '65+' | None (= all)
-    """
-    df = df_exp.copy()
+    df_f = df.copy()
+
     if sex_filter:
-        df = df[df['SEXO'] == sex_filter]
+        df_f = df_f[df_f['SEXO'] == sex_filter]
+
     if age_group:
-        df = df[df['AGE_GROUP'] == age_group]
-    return (df.groupby('YEAR')['WEIGHT']
-              .sum()
-              .reindex(YEARS, fill_value=0))
+        df_f = df_f[df_f['AGE_GROUP'] == age_group]
+
+    return (df_f.groupby('YEAR')
+                .size()
+                .reindex(YEARS, fill_value=0))
 
 
 def build_crude_rates_table(df_exp: pd.DataFrame) -> pd.DataFrame:
@@ -565,7 +560,9 @@ def build_crude_rates_table(df_exp: pd.DataFrame) -> pd.DataFrame:
             pops  = {y: WORLD_BANK_POP[(wb_sex, ag)][y] for y in YEARS}
             rates = {y: round(cases[y] / pops[y] * 100_000, 2)
                      for y in YEARS}
-            mean_rate = round(float(np.mean(list(rates.values()))), 2)
+            total_cases = sum(cases.values)
+            total_pop   = sum(pops.values())
+            mean_rate   = round(total_cases / total_pop * 100_000, 2)
 
             row = {
                 'Sex'               : disp_sex,
@@ -628,7 +625,7 @@ def _direct_standardisation(df_exp: pd.DataFrame,
 
     for ag in AGE_GROUPS:
         # Numerator: weighted case count
-        cases_g = df_yr[df_yr['AGE_GROUP'] == ag]['WEIGHT'].sum()
+       cases_g = df_yr[df_yr['AGE_GROUP'] == ag].shape[0]
         # Denominator: World Bank population for that stratum × year
         wb_pop_g = WORLD_BANK_POP[(wb_sex_key, ag)][year]
         # Stratum-specific crude rate (per 100,000)
@@ -893,6 +890,15 @@ def main(data_directory: str = '.') -> None:
     print(f"\n[1/6] Loading DEIS-MINSAL microdata...")
     df_c16 = load_deis_microdata(data_directory)
 
+    # Delete records without a valid age for rate calculation.
+df_c16 = df_c16[df_c16['GRUPO_EDAD'] != 'Not reported']
+
+# Create AGE_GROUP based on quinquenial mapping (without using WEIGHT)
+df_temp = expand_to_quinquennia(df_c16)
+
+# Tomar el primer AGE_GROUP asignado a cada registro original
+df_c16['AGE_GROUP'] = df_temp.groupby(df_temp.index)['AGE_GROUP'].first()
+
     # ── STEP 2: Expand to quinquennia ────────────────────────
     print(f"\n[2/6] Expanding records to quinquennia...")
     df_exp = expand_to_quinquennia(df_c16)
@@ -914,7 +920,7 @@ def main(data_directory: str = '.') -> None:
 
     # ── STEP 4: Table 1 — Crude rates ────────────────────────
     print(f"\n[4/6] Computing Table 1 — Crude rates...")
-    table_1 = build_crude_rates_table(df_exp)
+    table_1 = build_crude_rates_table(df_c16)
     print(f"\n    TABLE 1 — Crude hospital discharge rates "
           f"(per 100,000)\n")
     print(table_1.to_string(index=False))
@@ -922,7 +928,7 @@ def main(data_directory: str = '.') -> None:
     # ── STEP 5: Table 2 — Adjusted rates ─────────────────────
     print(f"\n[5/6] Computing Table 2 — Adjusted rates "
           f"(direct standardisation)...")
-    table_2 = build_adjusted_rates_table(df_exp)
+    table_2 = build_adjusted_rates_table(df_c16)
     print(f"\n    TABLE 2 — Age-adjusted discharge rates "
           f"(per 100,000)\n"
           f"    * Direct standardisation; reference: "
