@@ -29,7 +29,7 @@
 #
 # Google Colab usage:
 #   1. Mount Google Drive (Section 0).
-#   2. Place ALL CSV files in the working directory.
+#   2. Place DEIS CSV files in the working directory.
 #   3. Runtime → Run all.
 #
 # References:
@@ -60,8 +60,6 @@
 #   EGRE_DATOS_ABIERTOS_2020.csv
 #   EGR_DATOS_ABIERTO_2021.csv
 #   EGRE_DATOS_ABIERTOS_2022.csv
-#   BANCOMUNDIAL-1.csv
-#   CENSO2024-1.csv
 
 
 # ─────────────────────────────────────────────────────────────
@@ -96,83 +94,85 @@ QUINQUENNIA_ORDER = [
 
 
 # ─────────────────────────────────────────────────────────────
-# SECTION 3 — LOAD EXTERNAL DATA FROM CSV
+# SECTION 3 — POPULATION DATA (HARDCODED)
 # ─────────────────────────────────────────────────────────────
 
-def load_world_bank_pop(filepath: str = 'BANCOMUNDIAL-1.csv') -> dict:
-    """
-    Parse World Bank population CSV into a nested dict.
+# ── World Bank population denominators (Chile) ───────────────
+# Source: World Bank. Population estimates and projections —
+#         Chile. Washington D.C.: World Bank Group; 2024.
+# Keys: (sex_key, age_group) → {year: int}
+#   sex_key   : 'total' | 'male' | 'female'
+#   age_group : 'total' | '0-14' | '15-64' | '65+'
 
-    Returns
-    -------
-    dict  keyed (sex_key, age_group) → {year: int}
-        sex_key   : 'total' | 'male' | 'female'
-        age_group : 'total' | '0-14' | '15-64' | '65+'
+WORLD_BANK_POP = {
+    # ── TOTAL ────────────────────────────────────────────────
+    ('total', 'total')  : {2018: 18_893_191, 2019: 19_197_744,
+                           2020: 19_370_624, 2021: 19_456_334,
+                           2022: 19_553_036},
+    ('total', '0-14')   : {2018:  3_591_265, 2019:  3_590_541,
+                           2020:  3_566_677, 2021:  3_520_932,
+                           2022:  3_472_141},
+    ('total', '15-64')  : {2018: 13_022_716, 2019: 13_240_877,
+                           2020: 13_358_054, 2021: 13_414_555,
+                           2022: 13_480_325},
+    ('total', '65+')    : {2018:  2_279_210, 2019:  2_366_326,
+                           2020:  2_445_893, 2021:  2_520_847,
+                           2022:  2_600_569},
+    # ── MALE ─────────────────────────────────────────────────
+    ('male', 'total')   : {2018:  9_397_629, 2019:  9_549_157,
+                           2020:  9_633_238, 2021:  9_672_367,
+                           2022:  9_717_972},
+    ('male', '0-14')    : {2018:  1_831_026, 2019:  1_830_172,
+                           2020:  1_817_603, 2021:  1_794_009,
+                           2022:  1_768_982},
+    ('male', '15-64')   : {2018:  6_535_545, 2019:  6_645_743,
+                           2020:  6_705_296, 2021:  6_733_999,
+                           2022:  6_766_988},
+    ('male', '65+')     : {2018:  1_031_057, 2019:  1_073_242,
+                           2020:  1_110_339, 2021:  1_144_359,
+                           2022:  1_182_002},
+    # ── FEMALE ───────────────────────────────────────────────
+    ('female', 'total') : {2018:  9_495_562, 2019:  9_648_587,
+                           2020:  9_737_386, 2021:  9_783_967,
+                           2022:  9_835_064},
+    ('female', '0-14')  : {2018:  1_760_239, 2019:  1_760_369,
+                           2020:  1_749_074, 2021:  1_726_923,
+                           2022:  1_703_159},
+    ('female', '15-64') : {2018:  6_487_171, 2019:  6_595_134,
+                           2020:  6_652_758, 2021:  6_680_557,
+                           2022:  6_713_337},
+    ('female', '65+')   : {2018:  1_248_153, 2019:  1_293_084,
+                           2020:  1_335_554, 2021:  1_376_488,
+                           2022:  1_418_567},
+}
 
-    Source
-    ------
-    World Bank. Population estimates and projections — Chile.
-    Washington D.C.: World Bank Group; 2024.
-    """
-    ROW_MAP = {
-        'Población, hombres'                             : ('male',   'total'),
-        'Población, mujeres'                             : ('female', 'total'),
-        'Población, total'                               : ('total',  'total'),
-        'Población entre 0 y 14 años de edad, hombres'  : ('male',   '0-14'),
-        'Población entre 0 y 14 años de edad, mujeres'  : ('female', '0-14'),
-        'Población entre 0 y 14 años de edad, total'    : ('total',  '0-14'),
-        'Población entre 15 y 64 años de edad, hombres' : ('male',   '15-64'),
-        'Población entre 15 y 64 años de edad, mujeres' : ('female', '15-64'),
-        'Población entre 15 y 64 años de edad, total'   : ('total',  '15-64'),
-        'Población de 65 años de edad y más, hombres'   : ('male',   '65+'),
-        'Población de 65 años de edad y más, mujeres'   : ('female', '65+'),
-        'Población de 65 años de edad y más, total'     : ('total',  '65+'),
-    }
-    df  = pd.read_csv(filepath)
-    pop = {}
-    for _, row in df.iterrows():
-        label = str(row.iloc[0]).strip()
-        key   = ROW_MAP.get(label)
-        if key:
-            pop[key] = {y: int(row[str(y)]) for y in YEARS}
+# ── 2024 Census reference population (direct standardisation) ─
+# Source: INE Chile. Síntesis de resultados Censo de Población
+#         y Vivienda 2024. Santiago: INE; 2025.
+# Keys: (sex_key, age_group) → int
 
-    missing = [k for k in ROW_MAP.values() if k not in pop]
-    if missing:
-        raise ValueError(f"World Bank CSV — missing keys: {missing}")
-    return pop
-
-
-def load_census_2024(filepath: str = 'CENSO2024-1.csv') -> dict:
-    """
-    Parse 2024 Census CSV and derive sex-specific totals.
-
-    Returns
-    -------
-    dict  keyed (sex_key, age_group) → int
-        sex_key   : 'total' | 'male' | 'female'
-        age_group : 'total' | '0-14' | '15-64' | '65+'
-
-    Source
-    ------
-    INE Chile. Síntesis de resultados Censo de Población
-    y Vivienda 2024. Santiago: INE; 2025.
-    """
-    SEX_MAP = {'Hombres': 'male', 'Mujeres': 'female'}
-    df     = pd.read_csv(filepath)
-    census = {}
-    for _, row in df.iterrows():
-        age = str(row['EDAD']).strip()
-        sex = SEX_MAP.get(str(row['SEXO']).strip())
-        if sex and age in AGE_GROUPS:
-            census[(sex, age)] = int(row['N'])
-
-    for sex in ('male', 'female'):
-        census[(sex, 'total')] = sum(census[(sex, g)] for g in AGE_GROUPS)
-    for ag in AGE_GROUPS:
-        census[('total', ag)] = census[('male', ag)] + census[('female', ag)]
-    census[('total', 'total')] = (census[('male', 'total')]
-                                  + census[('female', 'total')])
-    return census
+CENSUS_2024 = {
+    # Males
+    ('male',   '0-14') : 1_668_530,
+    ('male',  '15-64') : 6_171_457,
+    ('male',    '65+') : 1_127_046,
+    # Females
+    ('female', '0-14') : 1_606_118,
+    ('female','15-64') : 6_447_089,
+    ('female',  '65+') : 1_460_192,
+}
+# Derived totals — sex-specific and overall
+for _sex in ('male', 'female'):
+    CENSUS_2024[(_sex, 'total')] = sum(
+        CENSUS_2024[(_sex, g)] for g in AGE_GROUPS)
+CENSUS_2024[('total', '0-14')]  = (CENSUS_2024[('male', '0-14')]
+                                   + CENSUS_2024[('female', '0-14')])
+CENSUS_2024[('total', '15-64')] = (CENSUS_2024[('male', '15-64')]
+                                   + CENSUS_2024[('female', '15-64')])
+CENSUS_2024[('total', '65+')]   = (CENSUS_2024[('male', '65+')]
+                                   + CENSUS_2024[('female', '65+')]  )
+CENSUS_2024[('total', 'total')] = (CENSUS_2024[('male', 'total')]
+                                   + CENSUS_2024[('female', 'total')])
 
 
 # ─────────────────────────────────────────────────────────────
@@ -188,7 +188,7 @@ DEIS_TO_QUINQUENNIUM = {
     'MENOR DE 7 DIAS'          : ['00-04 years'],
     '7 A 27 DÍAS'              : ['00-04 years'],
     '28 DIAS A 2 MES'          : ['00-04 years'],
-    '2 ,ESES A MENOS DE 1 AÑO' : ['00-04 years'],  # typo in source
+    '2 MESES A MENOS DE 1 AÑO' : ['00-04 years'],
     '2 MESES A MENOS DE 1 AÑO' : ['00-04 years'],
     'menor de un año'          : ['00-04 years'],
     'MENOR DE 1 AÑO'           : ['00-04 years'],
@@ -303,7 +303,7 @@ def load_deis_microdata(directory: str = '.') -> pd.DataFrame:
         name_up = filepath.name.upper()
         if any(t in name_up for t in [
                 'TABLA', 'ANALISIS', 'CANCER_GASTRICO',
-                'BANCOMUNDIAL', 'CENSO2024']):
+                'BANCOMUNDIAL', 'CENSO2024', 'CENSO']):
             continue
         for year in YEARS:
             if str(year) in name_up and (
@@ -555,21 +555,15 @@ def _weighted_cases_by_year(df_exp: pd.DataFrame,
                 .reindex(YEARS, fill_value=0))
 
 
-def build_crude_rates_table(df_exp: pd.DataFrame,
-                             wb_pop: dict) -> pd.DataFrame:
+def build_crude_rates_table(df_exp: pd.DataFrame) -> pd.DataFrame:
     """
     Table 1 — Crude hospital discharge rates for ICD-10 C16
     by sex, age group, and year. Chile, 2018–2022
     (per 100,000 inhabitants).
 
     Numerator  : WEIGHT.sum() per stratum.
-    Denominator: World Bank sex- and age-stratified population.
+    Denominator: WORLD_BANK_POP (hardcoded, Section 3).
     '2018–2022': arithmetic mean of the five annual crude rates.
-
-    Parameters
-    ----------
-    df_exp : pd.DataFrame  expanded microdata with WEIGHT column.
-    wb_pop : dict          World Bank population denominators.
 
     Returns
     -------
@@ -586,7 +580,7 @@ def build_crude_rates_table(df_exp: pd.DataFrame,
     for disp_sex, sex_filter, wb_sex in config:
         for ag in AGE_GROUPS:
             cases = _weighted_cases_by_year(df_exp, sex_filter, ag)
-            pops  = {y: wb_pop[(wb_sex, ag)][y] for y in YEARS}
+            pops  = {y: WORLD_BANK_POP[(wb_sex, ag)][y] for y in YEARS}
             rates = {y: round(cases[y] / pops[y] * 100_000, 2)
                      for y in YEARS}
             mean_rate = round(sum(rates.values()) / len(YEARS), 2)
@@ -613,9 +607,7 @@ def _direct_standardisation_with_variance(
         sex_filter: str | None,
         wb_sex_key: str,
         census_sex_key: str,
-        year: int,
-        wb_pop: dict,
-        census: dict) -> tuple[float, float]:
+        year: int) -> tuple[float, float]:
     """
     Directly age-standardised rate + Flanders (1984) SE.
 
@@ -629,8 +621,8 @@ def _direct_standardisation_with_variance(
 
     Poisson assumption: Var(cases_g) ≈ E[cases_g] ≈ cases_g.
     Numerator uses WEIGHT.sum() — handles fractional case counts.
-    Strata with cases_g = 0 contribute 0 to variance (no division
-    by zero).
+    Strata with cases_g = 0 contribute 0 to variance (safe
+    division; avoids zero-case issue in 0–14 stratum).
 
     Parameters
     ----------
@@ -639,8 +631,6 @@ def _direct_standardisation_with_variance(
     wb_sex_key     : 'male' | 'female' | 'total'
     census_sex_key : 'male' | 'female' | 'total'
     year           : 2018–2022
-    wb_pop         : World Bank population dict
-    census         : 2024 Census dict
 
     Returns
     -------
@@ -651,21 +641,19 @@ def _direct_standardisation_with_variance(
     if sex_filter:
         df_yr = df_yr[df_yr['SEXO'] == sex_filter]
 
-    W_total      = census[(census_sex_key, 'total')]
+    W_total      = CENSUS_2024[(census_sex_key, 'total')]
     weighted_sum = 0.0
     variance     = 0.0
 
     for ag in AGE_GROUPS:
         cases_g = df_yr[df_yr['AGE_GROUP'] == ag]['WEIGHT'].sum()
-        pop_g   = wb_pop[(wb_sex_key, ag)][year]
-        W_g     = census[(census_sex_key, ag)]
+        pop_g   = WORLD_BANK_POP[(wb_sex_key, ag)][year]
+        W_g     = CENSUS_2024[(census_sex_key, ag)]
 
         crude_g       = cases_g / pop_g * 100_000
         weighted_sum += crude_g * W_g
 
-        # Flanders (1984) variance contribution
-        # Var(crude_g) = cases_g / pop_g² × 100,000²  [Poisson]
-        # Contribution  = (W_g / W_total)² × Var(crude_g)
+        # Flanders (1984): variance contribution of stratum g
         if cases_g > 0:
             variance += (W_g / W_total) ** 2 * (cases_g / pop_g ** 2)
 
@@ -675,15 +663,13 @@ def _direct_standardisation_with_variance(
     return adj_rate, std_error
 
 
-def build_adjusted_rates_table(df_exp: pd.DataFrame,
-                                wb_pop: dict,
-                                census: dict) -> pd.DataFrame:
+def build_adjusted_rates_table(df_exp: pd.DataFrame) -> pd.DataFrame:
     """
     Table 2 — Age-adjusted discharge rates + Flanders SE
     by sex and year. Chile, 2018–2022 (per 100,000 inhabitants).
 
     Standardisation : direct method
-    Reference pop.  : 2024 Census (INE Chile, 2025)
+    Reference pop.  : CENSUS_2024 (hardcoded, Section 3)
     Age strata      : 0–14, 15–64, ≥65 years
     SE              : Flanders (1984) Poisson approximation
 
@@ -701,8 +687,7 @@ def build_adjusted_rates_table(df_exp: pd.DataFrame,
     for disp_sex, sex_filter, wb_key, census_key in config:
         for year in YEARS:
             rate, se = _direct_standardisation_with_variance(
-                df_exp, sex_filter, wb_key, census_key,
-                year, wb_pop, census)
+                df_exp, sex_filter, wb_key, census_key, year)
             rows.append({
                 'Sex'               : disp_sex,
                 'Year'              : year,
@@ -879,8 +864,7 @@ def main(data_directory: str = '.') -> None:
     Parameters
     ----------
     data_directory : str
-        Path to folder containing DEIS CSV files and the two
-        external data files (BANCOMUNDIAL-1.csv, CENSO2024-1.csv).
+        Path to folder containing DEIS CSV files.
         Default '.' = current working directory.
     """
     HDR = '═' * 62
@@ -890,14 +874,11 @@ def main(data_directory: str = '.') -> None:
     print("  Direct Standardisation | 2024 Census | Joinpoint")
     print(HDR)
 
-    # ── Load external population data ────────────────────────
-    print(f"\n[0/6] Loading external population data...")
-    ruta   = Path(data_directory)
-    wb_pop = load_world_bank_pop(str(ruta / 'BANCOMUNDIAL-1.csv'))
-    census = load_census_2024(str(ruta / 'CENSO2024-1.csv'))
-    print(f"    ✓  World Bank population denominators loaded")
-    print(f"    ✓  2024 Census reference population loaded")
-    print(f"       Census total: {census[('total','total')]:,}")
+    # ── Population data summary ───────────────────────────────
+    print(f"\n[0/6] Population data (hardcoded constants)")
+    print(f"    ✓  World Bank denominators  : 2018–2022, 3 strata × 3 sex")
+    print(f"    ✓  2024 Census reference    : "
+          f"{CENSUS_2024[('total','total')]:,} inhabitants")
 
     # ── STEP 1: Load DEIS microdata ───────────────────────────
     print(f"\n[1/6] Loading DEIS-MINSAL microdata (ICD-10 C16)...")
@@ -931,12 +912,12 @@ def main(data_directory: str = '.') -> None:
 
     # ── STEP 4: Table 1 — Crude rates ────────────────────────
     print(f"\n[4/6] Computing Table 1 — Crude rates...")
-    table_1 = build_crude_rates_table(df_exp, wb_pop)
+    table_1 = build_crude_rates_table(df_exp)
 
     # ── STEP 5: Table 2 — Adjusted rates + Flanders SE ───────
     print(f"\n[5/6] Computing Table 2 — Age-adjusted rates "
           f"(Flanders SE)...")
-    table_2 = build_adjusted_rates_table(df_exp, wb_pop, census)
+    table_2 = build_adjusted_rates_table(df_exp)
 
     # ── STEP 6: Validate & export ─────────────────────────────
     print(f"\n[6/6] Running validation and exporting...")
@@ -968,7 +949,7 @@ def main(data_directory: str = '.') -> None:
     Formula    : SE = sqrt(100,000² × Σ_g[(W_g/W_tot)² × n_g/P_g²])
     Assumption : Poisson variance for discharge counts.
     Reference  : Flanders WD. J Chronic Dis. 1984;37(6):449-53.
-    Use        : Input SE column for Joinpoint v6.0.1.
+    Use        : Standard_Error column in Joinpoint v6.0.1 input.
 
   AGE-GROUP HARMONISATION
     Decennial codes (legacy DEIS system) split into two
