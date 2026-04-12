@@ -1,52 +1,67 @@
 # ============================================================
 # GASTRIC CANCER HOSPITAL DISCHARGES — CHILE 2018–2022
-# Final analysis script for Google Colab
+# Peer-review ready analysis pipeline
 #
-# Produces:
-#   [A] Table of interest variables  (counts by quinquennium,
-#       region, discharge condition × sex × year)
-#   [B] Table 1 — Crude discharge rates by sex, age group
-#       and year (World Bank denominators)
-#   [C] Table 2 — Age-adjusted discharge rates by sex and year
-#       (direct standardization; 2024 Census as reference)
+# Outputs:
+#   Table A  — Descriptive counts (quinquennium × sex × year)
+#   Table 1  — Crude discharge rates (World Bank denominators)
+#   Table 2  — Age-adjusted rates + Flanders (1984) SE
+#              (direct standardisation; 2024 Census reference)
+#   Table 3  → computed in Joinpoint v6.0.1 (NCI, 2026)
+#              input: {prefix}_table2_for_joinpoint.txt
 #
-#   Table 3 (APC / Joinpoint) → computed externally in
-#   Joinpoint Regression Program v6.0.1 (NCI, 2026)
-#   using tabla2_tasas_ajustadas.csv as input.
+# Methodological notes:
+#   · Decennial DEIS codes split into 2 quinquennia (WEIGHT=0.5)
+#     following PAHO/WHO harmonisation standard.
+#   · ALL numerators use WEIGHT.sum() — correctly handles
+#     fractional case counts from decennial-coded records.
+#   · Direct standardisation: Σ_g(crude_g × W_g) / Σ_g W_g
+#     where W_g = 2024 Census sex-specific stratum population.
+#   · Variance: Flanders (1984) Poisson approximation.
+#     Var(R_adj) = 100,000² × Σ_g[(W_g/W_tot)² × cases_g/pop_g²]
+#   · '2018–2022' summary = arithmetic mean of annual rates
+#     (consistent with Joinpoint input series).
 #
 # Data sources:
-#   · DEIS-MINSAL: hospital discharge microdata (ICD-10 C16)
-#   · 2024 Population & Housing Census (INE Chile)
-#   · World Bank: population estimates 2018–2022
+#   · DEIS-MINSAL   : hospital discharge microdata (ICD-10 C16)
+#   · INE Chile     : 2024 Population & Housing Census
+#   · World Bank    : population estimates 2018–2022
 #
-# How to run in Google Colab:
-#   1. Mount Google Drive (see Section 0).
-#   2. Set WORKING_DIR to the folder containing the 5 DEIS CSVs.
-#   3. Run all cells (Runtime → Run all).
+# Google Colab usage:
+#   1. Mount Google Drive (Section 0).
+#   2. Place ALL CSV files in the working directory.
+#   3. Runtime → Run all.
 #
-# Authors: [pending]
-# Study: "Stagnation of Hospital Burden from Gastric Cancer in
-#         Chile (2018–2022): Joinpoint Regression Analysis with
-#         Demographic Adjustment to the 2024 Census"
+# References:
+#   Flanders WD. Approximate variance formulas for standardized
+#   rate ratios. J Chronic Dis. 1984;37(6):449-53.
+#   Kim HJ et al. Permutation tests for joinpoint regression.
+#   Stat Med. 2000;19(3):335-51.
+#
+# Authors : [pending]
+# Study   : "Stagnation of Hospital Burden from Gastric Cancer
+#            in Chile (2018–2022): Joinpoint Regression Analysis
+#            with Demographic Adjustment to the 2024 Census"
 # ============================================================
 
 
 # ─────────────────────────────────────────────────────────────
 # SECTION 0 — GOOGLE COLAB SETUP
 # ─────────────────────────────────────────────────────────────
-# Uncomment the three lines below when running in Google Colab:
+# Uncomment when running in Google Colab:
 #
 # from google.colab import drive
 # drive.mount('/content/drive')
 # import os; os.chdir('/content/drive/MyDrive/YOUR/DATA/FOLDER')
 #
-# The working directory must contain:
+# Working directory must contain:
 #   EGRE_DATOS_ABIERTOS_2018.csv
 #   EGRE_DATOS_ABIERTOS_2019.csv
 #   EGRE_DATOS_ABIERTOS_2020.csv
 #   EGR_DATOS_ABIERTO_2021.csv
 #   EGRE_DATOS_ABIERTOS_2022.csv
-# ─────────────────────────────────────────────────────────────
+#   BANCOMUNDIAL-1.csv
+#   CENSO2024-1.csv
 
 
 # ─────────────────────────────────────────────────────────────
@@ -62,19 +77,14 @@ warnings.filterwarnings('ignore')
 # ─────────────────────────────────────────────────────────────
 # SECTION 2 — GLOBAL CONSTANTS
 # ─────────────────────────────────────────────────────────────
-
-YEARS = [2018, 2019, 2020, 2021, 2022]
-
-# ICD-10 C16.x codes present in DEIS files
-ICD10_C16 = [
-    'C160', 'C161', 'C162', 'C163', 'C164',
-    'C165', 'C166', 'C168', 'C169'
-]
-
-# Analytical age groups (matching article strata)
+YEARS      = [2018, 2019, 2020, 2021, 2022]
 AGE_GROUPS = ['0-14', '15-64', '65+']
 
-# Canonical quinquennium order (for output table)
+ICD10_C16 = [
+    'C160', 'C161', 'C162', 'C163', 'C164',
+    'C165', 'C166', 'C168', 'C169',
+]
+
 QUINQUENNIA_ORDER = [
     '00-04 years', '05-09 years', '10-14 years',
     '15-19 years', '20-24 years', '25-29 years',
@@ -84,101 +94,107 @@ QUINQUENNIA_ORDER = [
     '80-84 years', '85+ years', 'Not reported',
 ]
 
-# ── World Bank population denominators (Chile) ───────────────
-# Source: World Bank, Population estimates and projections —
-#         Chile. Washington D.C.: World Bank Group; 2024.
-# Keys: (sex_key, age_group_key)
-# sex_key    : 'total' | 'male' | 'female'
-# age_group  : '0-14' | '15-64' | '65+' | 'total'
 
-WORLD_BANK_POP = {
-    # ── TOTAL ────────────────────────────────────────────────
-    ('total', 'total')  : {2018: 18_893_191, 2019: 19_197_744,
-                           2020: 19_370_624, 2021: 19_456_334,
-                           2022: 19_553_036},
-    ('total', '0-14')   : {2018:  3_591_265, 2019:  3_590_541,
-                           2020:  3_566_677, 2021:  3_520_932,
-                           2022:  3_472_141},
-    ('total', '15-64')  : {2018: 13_022_716, 2019: 13_240_877,
-                           2020: 13_358_054, 2021: 13_414_555,
-                           2022: 13_480_325},
-    ('total', '65+')    : {2018:  2_279_210, 2019:  2_366_326,
-                           2020:  2_445_893, 2021:  2_520_847,
-                           2022:  2_600_569},
-    # ── MALE ─────────────────────────────────────────────────
-    ('male', 'total')   : {2018:  9_397_629, 2019:  9_549_157,
-                           2020:  9_633_238, 2021:  9_672_367,
-                           2022:  9_717_972},
-    ('male', '0-14')    : {2018:  1_831_026, 2019:  1_830_172,
-                           2020:  1_817_603, 2021:  1_794_009,
-                           2022:  1_768_982},
-    ('male', '15-64')   : {2018:  6_535_545, 2019:  6_645_743,
-                           2020:  6_705_296, 2021:  6_733_999,
-                           2022:  6_766_988},
-    ('male', '65+')     : {2018:  1_031_057, 2019:  1_073_242,
-                           2020:  1_110_339, 2021:  1_144_359,
-                           2022:  1_182_002},
-    # ── FEMALE ───────────────────────────────────────────────
-    ('female', 'total') : {2018:  9_495_562, 2019:  9_648_587,
-                           2020:  9_737_386, 2021:  9_783_967,
-                           2022:  9_835_064},
-    ('female', '0-14')  : {2018:  1_760_239, 2019:  1_760_369,
-                           2020:  1_749_074, 2021:  1_726_923,
-                           2022:  1_703_159},
-    ('female', '15-64') : {2018:  6_487_171, 2019:  6_595_134,
-                           2020:  6_652_758, 2021:  6_680_557,
-                           2022:  6_713_337},
-    ('female', '65+')   : {2018:  1_248_153, 2019:  1_293_084,
-                           2020:  1_335_554, 2021:  1_376_488,
-                           2022:  1_418_567},
-}
+# ─────────────────────────────────────────────────────────────
+# SECTION 3 — LOAD EXTERNAL DATA FROM CSV
+# ─────────────────────────────────────────────────────────────
 
-# ── 2024 Census reference population (direct standardization) ─
-# Source: INE Chile. Síntesis de resultados Censo de Población
-#         y Vivienda 2024. Santiago: INE; 2025.
+def load_world_bank_pop(filepath: str = 'BANCOMUNDIAL-1.csv') -> dict:
+    """
+    Parse World Bank population CSV into a nested dict.
 
-CENSUS_2024 = {
-    # Males
-    ('male',   '0-14') : 1_668_530,
-    ('male',  '15-64') : 6_171_457,
-    ('male',    '65+') : 1_127_046,
-    # Females
-    ('female', '0-14') : 1_606_118,
-    ('female','15-64') : 6_447_089,
-    ('female',  '65+') : 1_460_192,
-}
-# Derived totals (sex-specific and overall)
-for sex in ('male', 'female'):
-    CENSUS_2024[(sex, 'total')] = sum(
-        CENSUS_2024[(sex, g)] for g in AGE_GROUPS
-    )
-CENSUS_2024[('total', '0-14')]  = CENSUS_2024[('male','0-14')]  + CENSUS_2024[('female','0-14')]
-CENSUS_2024[('total', '15-64')] = CENSUS_2024[('male','15-64')] + CENSUS_2024[('female','15-64')]
-CENSUS_2024[('total', '65+')]   = CENSUS_2024[('male','65+')]   + CENSUS_2024[('female','65+')]
-CENSUS_2024[('total', 'total')] = CENSUS_2024[('male','total')] + CENSUS_2024[('female','total')]
+    Returns
+    -------
+    dict  keyed (sex_key, age_group) → {year: int}
+        sex_key   : 'total' | 'male' | 'female'
+        age_group : 'total' | '0-14' | '15-64' | '65+'
+
+    Source
+    ------
+    World Bank. Population estimates and projections — Chile.
+    Washington D.C.: World Bank Group; 2024.
+    """
+    ROW_MAP = {
+        'Población, hombres'                             : ('male',   'total'),
+        'Población, mujeres'                             : ('female', 'total'),
+        'Población, total'                               : ('total',  'total'),
+        'Población entre 0 y 14 años de edad, hombres'  : ('male',   '0-14'),
+        'Población entre 0 y 14 años de edad, mujeres'  : ('female', '0-14'),
+        'Población entre 0 y 14 años de edad, total'    : ('total',  '0-14'),
+        'Población entre 15 y 64 años de edad, hombres' : ('male',   '15-64'),
+        'Población entre 15 y 64 años de edad, mujeres' : ('female', '15-64'),
+        'Población entre 15 y 64 años de edad, total'   : ('total',  '15-64'),
+        'Población de 65 años de edad y más, hombres'   : ('male',   '65+'),
+        'Población de 65 años de edad y más, mujeres'   : ('female', '65+'),
+        'Población de 65 años de edad y más, total'     : ('total',  '65+'),
+    }
+    df  = pd.read_csv(filepath)
+    pop = {}
+    for _, row in df.iterrows():
+        label = str(row.iloc[0]).strip()
+        key   = ROW_MAP.get(label)
+        if key:
+            pop[key] = {y: int(row[str(y)]) for y in YEARS}
+
+    missing = [k for k in ROW_MAP.values() if k not in pop]
+    if missing:
+        raise ValueError(f"World Bank CSV — missing keys: {missing}")
+    return pop
+
+
+def load_census_2024(filepath: str = 'CENSO2024-1.csv') -> dict:
+    """
+    Parse 2024 Census CSV and derive sex-specific totals.
+
+    Returns
+    -------
+    dict  keyed (sex_key, age_group) → int
+        sex_key   : 'total' | 'male' | 'female'
+        age_group : 'total' | '0-14' | '15-64' | '65+'
+
+    Source
+    ------
+    INE Chile. Síntesis de resultados Censo de Población
+    y Vivienda 2024. Santiago: INE; 2025.
+    """
+    SEX_MAP = {'Hombres': 'male', 'Mujeres': 'female'}
+    df     = pd.read_csv(filepath)
+    census = {}
+    for _, row in df.iterrows():
+        age = str(row['EDAD']).strip()
+        sex = SEX_MAP.get(str(row['SEXO']).strip())
+        if sex and age in AGE_GROUPS:
+            census[(sex, age)] = int(row['N'])
+
+    for sex in ('male', 'female'):
+        census[(sex, 'total')] = sum(census[(sex, g)] for g in AGE_GROUPS)
+    for ag in AGE_GROUPS:
+        census[('total', ag)] = census[('male', ag)] + census[('female', ag)]
+    census[('total', 'total')] = (census[('male', 'total')]
+                                  + census[('female', 'total')])
+    return census
 
 
 # ─────────────────────────────────────────────────────────────
-# SECTION 3 — AGE-GROUP MAPPINGS
+# SECTION 4 — AGE-GROUP MAPPINGS
 # ─────────────────────────────────────────────────────────────
-# Maps each DEIS GRUPO_EDAD label → quinquennium or quinquennia.
-# Decades (legacy coding) are split into two equal quinquennia
-# (weight = 0.5 each), following PAHO/WHO harmonisation standard.
+# 4A. DEIS GRUPO_EDAD → list of quinquennia
+#     Decennial codes  → 2 quinquennia, WEIGHT = 0.5 each
+#     Quinquennial     → 1 quinquennium, WEIGHT = 1.0
 
-# 3A. DEIS label → list of quinquennia (for Table A counts)
 DEIS_TO_QUINQUENNIUM = {
-    # ── Paediatric groups → 00-04 years ──────────────────────
+    # ── Paediatric (<1 year and 1–4 years) → 00-04 ──────────
     'menor a 7 días'           : ['00-04 years'],
     'MENOR DE 7 DIAS'          : ['00-04 years'],
     '7 A 27 DÍAS'              : ['00-04 years'],
     '28 DIAS A 2 MES'          : ['00-04 years'],
-    '2 ,ESES A MENOS DE 1 AÑO' : ['00-04 years'],   # typo in source
+    '2 ,ESES A MENOS DE 1 AÑO' : ['00-04 years'],  # typo in source
     '2 MESES A MENOS DE 1 AÑO' : ['00-04 years'],
     'menor de un año'          : ['00-04 years'],
     'MENOR DE 1 AÑO'           : ['00-04 years'],
     '1 a 4 AÑOS'               : ['00-04 years'],
     '1 A 4 AÑOS'               : ['00-04 years'],
-    # ── Direct quinquennia (new coding system) ────────────────
+    # ── Direct quinquennia (new DEIS coding, 2015+) ──────────
     '5 A 9 AÑOS'    : ['05-09 years'],
     '10 A 14 AÑOS'  : ['10-14 years'],
     '15 A 19 AÑOS'  : ['15-19 years'],
@@ -197,7 +213,7 @@ DEIS_TO_QUINQUENNIUM = {
     '80 A 84 AÑOS'  : ['80-84 years'],
     '85 A MAS'      : ['85+ years'],
     '85 Y MAS'      : ['85+ years'],
-    # ── Decades (legacy coding) → two quinquennia, w=0.5 each ─
+    # ── Decades (legacy coding) → 2 quinquennia, w=0.5 each ─
     '1 a 9'   : ['05-09 years'],
     '1 A 9'   : ['05-09 years'],
     '10 a 19' : ['10-14 years', '15-19 years'],
@@ -221,7 +237,7 @@ DEIS_TO_QUINQUENNIUM = {
     '90 Y MAS': ['85+ years'],
 }
 
-# 3B. Quinquennium → analytical age group (for rate calculations)
+# 4B. Quinquennium → analytical age group
 QUINQUENNIUM_TO_AGEGROUP = {
     '00-04 years' : '0-14',
     '05-09 years' : '0-14',
@@ -246,30 +262,28 @@ QUINQUENNIUM_TO_AGEGROUP = {
 
 
 # ─────────────────────────────────────────────────────────────
-# SECTION 4 — DATA LOADING AND CLEANING
+# SECTION 5 — DATA LOADING (DEIS-MINSAL)
 # ─────────────────────────────────────────────────────────────
 
 def _load_csv(filepath: Path) -> pd.DataFrame | None:
-    """Load a single DEIS CSV with robust encoding handling."""
+    """Load a DEIS CSV with encoding fallback (latin1 → utf-8)."""
     for enc in ('latin1', 'iso-8859-1', 'utf-8'):
         try:
-            df = pd.read_csv(filepath, sep=';', encoding=enc, low_memory=False)
-            return df
+            return pd.read_csv(
+                filepath, sep=';', encoding=enc, low_memory=False)
         except UnicodeDecodeError:
             continue
         except Exception as e:
             print(f"    ✗ Cannot load {filepath.name}: {e}")
             return None
-    print(f"    ✗ Encoding not resolved for {filepath.name}")
+    print(f"    ✗ Encoding unresolved for {filepath.name}")
     return None
 
 
 def load_deis_microdata(directory: str = '.') -> pd.DataFrame:
     """
-    Load and concatenate the five annual DEIS CSV files.
-
-    Expected filenames must contain the year (2018–2022) and
-    'EGRE' or 'EGR' anywhere in the name (case-insensitive).
+    Load and concatenate the five annual DEIS CSV files,
+    filtered to ICD-10 C16 principal diagnoses.
 
     Parameters
     ----------
@@ -279,61 +293,57 @@ def load_deis_microdata(directory: str = '.') -> pd.DataFrame:
     Returns
     -------
     pd.DataFrame
-        Filtered dataframe with ICD-10 C16.x records only,
-        with standardised column values.
+        Standardised microdata (SEXO, GRUPO_EDAD, YEAR, ...).
     """
-    ruta = Path(directory)
+    ruta     = Path(directory)
     archivos = list(ruta.glob('*.csv'))
-    loaded = {}
+    loaded   = {}
 
     for filepath in archivos:
-        name_upper = filepath.name.upper()
-        # Skip our own output files
-        if any(tag in name_upper for tag in
-               ['TABLA', 'ANALISIS', 'CANCER_GASTRICO', 'CENSO', 'BANCO']):
+        name_up = filepath.name.upper()
+        if any(t in name_up for t in [
+                'TABLA', 'ANALISIS', 'CANCER_GASTRICO',
+                'BANCOMUNDIAL', 'CENSO2024']):
             continue
         for year in YEARS:
-            if str(year) in name_upper and (
-                    'EGRE' in name_upper or 'EGR' in name_upper):
+            if str(year) in name_up and (
+                    'EGRE' in name_up or 'EGR' in name_up):
                 df = _load_csv(filepath)
                 if df is not None:
                     df['YEAR'] = year
                     loaded[year] = df
-                    print(f"    ✓  {filepath.name:<45}  {len(df):>9,} records")
+                    print(f"    ✓  {filepath.name:<45}  "
+                          f"{len(df):>9,} records")
                 break
 
     if not loaded:
         raise FileNotFoundError(
-            "\n  No DEIS discharge files found in the working directory.\n"
-            "  Make sure the five annual CSV files from DEIS-MINSAL are\n"
-            "  in the same folder as this script and contain the year\n"
-            "  in their filename (e.g. EGRE_DATOS_ABIERTOS_2018.csv)."
-        )
+            "No DEIS discharge files found. Ensure the five annual "
+            "CSVs (2018–2022) are in the working directory.")
 
     missing = [y for y in YEARS if y not in loaded]
     if missing:
         print(f"\n    ⚠  Missing years: {missing}")
 
     df_all = pd.concat(loaded.values(), ignore_index=True)
-
-    # ── Filter C16 ────────────────────────────────────────────
     df_c16 = df_all[df_all['DIAG1'].isin(ICD10_C16)].copy()
-    print(f"\n    Total C16 records : {len(df_c16):,}")
-    print(f"    By year:\n"
-          f"{df_c16['YEAR'].value_counts().sort_index().to_string()}")
 
-    # ── Standardise columns ───────────────────────────────────
-    for col in ['SEXO', 'GRUPO_EDAD', 'GLOSA_REGION_RESIDENCIA',
-                'CONDICION_EGRESO']:
+    print(f"\n    Total C16 records : {len(df_c16):,}")
+    print(df_c16['YEAR'].value_counts().sort_index().to_string())
+
+    for col in ['SEXO', 'GRUPO_EDAD',
+                'GLOSA_REGION_RESIDENCIA', 'CONDICION_EGRESO']:
         if col in df_c16.columns:
             df_c16[col] = (df_c16[col]
                            .replace('*', 'Not reported')
                            .fillna('Not reported'))
 
-    df_c16['SEXO'] = (df_c16['SEXO']
-                      .astype(str).str.upper().str.strip()
-                      .replace({'1': 'MALE', '2': 'FEMALE',
-                                'HOMBRE': 'MALE', 'MUJER': 'FEMALE'}))
+    df_c16['SEXO'] = (
+        df_c16['SEXO']
+        .astype(str).str.upper().str.strip()
+        .replace({'1': 'MALE', '2': 'FEMALE',
+                  'HOMBRE': 'MALE', 'MUJER': 'FEMALE'})
+    )
 
     if 'DIAS_ESTADA' in df_c16.columns:
         df_c16['DIAS_ESTADA'] = pd.to_numeric(
@@ -343,40 +353,44 @@ def load_deis_microdata(directory: str = '.') -> pd.DataFrame:
 
 
 # ─────────────────────────────────────────────────────────────
-# SECTION 5 — QUINQUENNIUM EXPANSION
+# SECTION 6 — QUINQUENNIUM EXPANSION
 # ─────────────────────────────────────────────────────────────
 
 def expand_to_quinquennia(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Expand records with decennial age coding into two rows
-    (weight = 0.5 per quinquennium).  Direct quinquennial
-    coding: weight = 1.0.  Unrecognised codes: 'Not reported'.
+    Expand each microdata record to one row per quinquennium.
 
-    This follows the PAHO/WHO standard for harmonising time
-    series affected by changes in age-group coding.
+    · Decennial codes (e.g. '60 A 69')  → 2 rows, WEIGHT = 0.5
+    · Quinquennial codes                 → 1 row,  WEIGHT = 1.0
+    · Unrecognised codes                 → 1 row,  WEIGHT = 1.0,
+                                           QUINQUENNIUM = 'Not reported'
+
+    The fractional weight (0.5) ensures that a single discharge
+    record contributes exactly 1.0 case in total across the two
+    quinquennia it spans, preserving rate integrity when
+    WEIGHT.sum() is used as numerator.
 
     Parameters
     ----------
-    df : pd.DataFrame
-        C16 microdata with GRUPO_EDAD column.
+    df : pd.DataFrame  C16 microdata with GRUPO_EDAD column.
 
     Returns
     -------
     pd.DataFrame
-        Expanded dataframe with QUINQUENNIUM and WEIGHT columns.
+        Expanded frame with QUINQUENNIUM, WEIGHT, AGE_GROUP.
     """
-    rows = []
+    rows       = []
     age_series = df['GRUPO_EDAD'].astype(str).str.strip()
 
     for idx, row in df.iterrows():
-        raw = age_series[idx]
+        raw         = age_series[idx]
         quinquennia = DEIS_TO_QUINQUENNIUM.get(raw)
         if quinquennia is None:
-            quinquennia = DEIS_TO_QUINQUENNIUM.get(raw.upper(),
-                                                    ['Not reported'])
+            quinquennia = DEIS_TO_QUINQUENNIUM.get(
+                raw.upper(), ['Not reported'])
         weight = 1.0 / len(quinquennia)
         for q in quinquennia:
-            new_row = row.copy()
+            new_row               = row.copy()
             new_row['QUINQUENNIUM'] = q
             new_row['WEIGHT']       = weight
             rows.append(new_row)
@@ -388,113 +402,122 @@ def expand_to_quinquennia(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ─────────────────────────────────────────────────────────────
-# SECTION 6 — TABLE A: COUNTS (interest variables matrix)
+# SECTION 7 — TABLE A: DESCRIPTIVE COUNTS MATRIX
 # ─────────────────────────────────────────────────────────────
 
-def _process_segment(df_seg: pd.DataFrame,
-                     sex_label: str,
-                     year_label: str) -> list[dict]:
-    """Build count rows for one sex × year segment."""
+def _segment_counts(df_seg: pd.DataFrame,
+                    sex_label: str,
+                    year_label: str) -> list[dict]:
+    """Compute count rows for one sex × year segment."""
     results = []
-    n_total = int(df_seg['WEIGHT'].sum().round())
+    n_total = round(df_seg['WEIGHT'].sum())
 
-    # Grand total
-    results.append({'SEX': sex_label, 'VARIABLE': 'GRAND_TOTAL',
-                    'CATEGORY': 'GRAND_TOTAL',
-                    'N': n_total, 'YEAR': year_label})
+    results.append({
+        'SEX': sex_label, 'VARIABLE': 'GRAND_TOTAL',
+        'CATEGORY': 'GRAND_TOTAL',
+        'N': n_total, 'YEAR': year_label,
+    })
 
-    # ── Quinquennia (weighted) ────────────────────────────────
-    counts_q = (df_seg.groupby('QUINQUENNIUM')['WEIGHT']
-            .sum())
-    counts_q = counts_q.reindex(
-        [q for q in QUINQUENNIA_ORDER if q in counts_q.index],
+    # Quinquennia (weighted sums)
+    cq = df_seg.groupby('QUINQUENNIUM')['WEIGHT'].sum()
+    cq = cq.reindex(
+        [q for q in QUINQUENNIA_ORDER if q in cq.index],
         fill_value=0)
-    for cat, n in counts_q.items():
-        results.append({'SEX': sex_label,
-                        'VARIABLE': 'AGE_GROUP_QUINQUENNIUM',
-                        'CATEGORY': cat, 'N': n, 'YEAR': year_label})
-    results.append({'SEX': sex_label,
-                    'VARIABLE': 'AGE_GROUP_QUINQUENNIUM',
-                    'CATEGORY': 'SUBTOTAL_AGE',
-                    'N': n_total, 'YEAR': year_label})
+    for cat, n in cq.items():
+        results.append({
+            'SEX': sex_label, 'VARIABLE': 'AGE_GROUP_QUINQUENNIUM',
+            'CATEGORY': cat, 'N': n, 'YEAR': year_label,
+        })
+    results.append({
+        'SEX': sex_label, 'VARIABLE': 'AGE_GROUP_QUINQUENNIUM',
+        'CATEGORY': 'SUBTOTAL_AGE',
+        'N': n_total, 'YEAR': year_label,
+    })
 
-    # ── Analytical age groups (weighted) ─────────────────────
+    # Analytical age groups (weighted sums)
     for ag in AGE_GROUPS + ['Not reported']:
-        n_ag = int(df_seg[df_seg['AGE_GROUP'] == ag]['WEIGHT']
-                   .sum().round())
-        results.append({'SEX': sex_label,
-                        'VARIABLE': 'ANALYTICAL_AGE_GROUP',
-                        'CATEGORY': ag, 'N': n_ag, 'YEAR': year_label})
-    results.append({'SEX': sex_label,
-                    'VARIABLE': 'ANALYTICAL_AGE_GROUP',
-                    'CATEGORY': 'SUBTOTAL_AGE',
-                    'N': n_total, 'YEAR': year_label})
+        n_ag = round(
+            df_seg[df_seg['AGE_GROUP'] == ag]['WEIGHT'].sum())
+        results.append({
+            'SEX': sex_label, 'VARIABLE': 'ANALYTICAL_AGE_GROUP',
+            'CATEGORY': ag, 'N': n_ag, 'YEAR': year_label,
+        })
+    results.append({
+        'SEX': sex_label, 'VARIABLE': 'ANALYTICAL_AGE_GROUP',
+        'CATEGORY': 'SUBTOTAL_AGE',
+        'N': n_total, 'YEAR': year_label,
+    })
 
-    # ── Region of residence ───────────────────────────────────
+    # Region of residence (row counts)
     for cat, n in (df_seg['GLOSA_REGION_RESIDENCIA']
                    .value_counts().items()):
-        results.append({'SEX': sex_label,
-                        'VARIABLE': 'REGION_OF_RESIDENCE',
-                        'CATEGORY': str(cat), 'N': n,
-                        'YEAR': year_label})
-    results.append({'SEX': sex_label,
-                    'VARIABLE': 'REGION_OF_RESIDENCE',
-                    'CATEGORY': 'SUBTOTAL_REGION',
-                    'N': n_total, 'YEAR': year_label})
+        results.append({
+            'SEX': sex_label, 'VARIABLE': 'REGION_OF_RESIDENCE',
+            'CATEGORY': str(cat), 'N': n, 'YEAR': year_label,
+        })
+    results.append({
+        'SEX': sex_label, 'VARIABLE': 'REGION_OF_RESIDENCE',
+        'CATEGORY': 'SUBTOTAL_REGION',
+        'N': n_total, 'YEAR': year_label,
+    })
 
-    # ── Discharge condition (in-hospital mortality proxy) ─────
-    for cat, n in df_seg['CONDICION_EGRESO'].value_counts().items():
-        results.append({'SEX': sex_label,
-                        'VARIABLE': 'DISCHARGE_CONDITION',
-                        'CATEGORY': str(cat), 'N': n,
-                        'YEAR': year_label})
-    results.append({'SEX': sex_label,
-                    'VARIABLE': 'DISCHARGE_CONDITION',
-                    'CATEGORY': 'SUBTOTAL_DISCHARGE',
-                    'N': n_total, 'YEAR': year_label})
+    # Discharge condition (row counts)
+    for cat, n in (df_seg['CONDICION_EGRESO']
+                   .value_counts().items()):
+        results.append({
+            'SEX': sex_label, 'VARIABLE': 'DISCHARGE_CONDITION',
+            'CATEGORY': str(cat), 'N': n, 'YEAR': year_label,
+        })
+    results.append({
+        'SEX': sex_label, 'VARIABLE': 'DISCHARGE_CONDITION',
+        'CATEGORY': 'SUBTOTAL_DISCHARGE',
+        'N': n_total, 'YEAR': year_label,
+    })
 
     return results
 
 
 def build_counts_table(df_exp: pd.DataFrame) -> pd.DataFrame:
     """
-    Build the hierarchical counts matrix
-    (sex × variable × category × year), pivoted wide by year.
+    Table A — Descriptive counts matrix (wide format).
+
+    Dimensions : sex × variable × category × year.
+    Age counts : WEIGHT.sum() — handles fractional cases.
+    Non-age    : row counts (region, discharge condition).
 
     Returns
     -------
-    pd.DataFrame
-        Wide-format table with one column per year + TOTAL_5Y.
+    pd.DataFrame  columns: SEX, VARIABLE, CATEGORY,
+                           2018, 2019, 2020, 2021, 2022, TOTAL_5Y
     """
     all_rows = []
-
     for year in YEARS + [None]:
         year_label = str(year) if year else 'TOTAL_5Y'
-        df_yr = (df_exp[df_exp['YEAR'] == year]
-                 if year else df_exp)
-
+        df_yr = df_exp[df_exp['YEAR'] == year] if year else df_exp
         for sex_label in ['GENERAL', 'MALE', 'FEMALE']:
             df_seg = (df_yr if sex_label == 'GENERAL'
                       else df_yr[df_yr['SEXO'] == sex_label])
-            all_rows += _process_segment(df_seg, sex_label, year_label)
+            all_rows += _segment_counts(df_seg, sex_label, year_label)
 
     df_long = pd.DataFrame(all_rows)
-    df_wide = df_long.pivot_table(
-        index=['SEX', 'VARIABLE', 'CATEGORY'],
-        columns='YEAR', values='N', aggfunc='first'
-    ).reset_index()
+    df_wide = (
+        df_long
+        .pivot_table(index=['SEX', 'VARIABLE', 'CATEGORY'],
+                     columns='YEAR', values='N', aggfunc='first')
+        .reset_index()
+    )
 
-    # Column order
     year_cols = [str(y) for y in YEARS] + ['TOTAL_5Y']
     present   = [c for c in year_cols if c in df_wide.columns]
     df_wide   = df_wide[['SEX', 'VARIABLE', 'CATEGORY'] + present]
 
-    # Row order
     sex_ord = {'GENERAL': 0, 'MALE': 1, 'FEMALE': 2}
-    var_ord = {'GRAND_TOTAL': 0, 'AGE_GROUP_QUINQUENNIUM': 1,
-               'ANALYTICAL_AGE_GROUP': 2,
-               'REGION_OF_RESIDENCE': 3, 'DISCHARGE_CONDITION': 4}
-    q_ord   = {q: i for i, q in enumerate(QUINQUENNIA_ORDER)}
+    var_ord = {
+        'GRAND_TOTAL': 0, 'AGE_GROUP_QUINQUENNIUM': 1,
+        'ANALYTICAL_AGE_GROUP': 2,
+        'REGION_OF_RESIDENCE': 3, 'DISCHARGE_CONDITION': 4,
+    }
+    q_ord = {q: i for i, q in enumerate(QUINQUENNIA_ORDER)}
 
     df_wide['_s'] = df_wide['SEX'].map(sex_ord)
     df_wide['_v'] = df_wide['VARIABLE'].map(var_ord)
@@ -506,47 +529,53 @@ def build_counts_table(df_exp: pd.DataFrame) -> pd.DataFrame:
                .sort_values(['_s', '_v', '_c'])
                .drop(columns=['_s', '_v', '_c'])
                .reset_index(drop=True))
-
     return df_wide
 
 
 # ─────────────────────────────────────────────────────────────
-# SECTION 7 — TABLE 1: CRUDE RATES
+# SECTION 8 — TABLE 1: CRUDE RATES
 # ─────────────────────────────────────────────────────────────
 
-def _get_cases(df: pd.DataFrame,
-               sex_filter: str | None,
-               age_group: str | None) -> pd.Series:
+def _weighted_cases_by_year(df_exp: pd.DataFrame,
+                             sex_filter: str | None,
+                             age_group: str) -> pd.Series:
+    """
+    WEIGHT.sum() per year for one sex/age stratum.
 
-    df_f = df.copy()
-
+    Using WEIGHT.sum() instead of .size() is critical:
+    decennial-coded records expand to 2 rows (WEIGHT=0.5 each),
+    so .size() would double-count them.
+    """
+    df_f = df_exp.copy()
     if sex_filter:
         df_f = df_f[df_f['SEXO'] == sex_filter]
-
-    if age_group:
-        df_f = df_f[df_f['AGE_GROUP'] == age_group]
-
-    return (df_f.groupby('YEAR')
-                .size()
+    df_f = df_f[df_f['AGE_GROUP'] == age_group]
+    return (df_f.groupby('YEAR')['WEIGHT']
+                .sum()
                 .reindex(YEARS, fill_value=0))
 
 
-def build_crude_rates_table(df_exp: pd.DataFrame) -> pd.DataFrame:
+def build_crude_rates_table(df_exp: pd.DataFrame,
+                             wb_pop: dict) -> pd.DataFrame:
     """
-    Table 1 — Crude hospital discharge rates for gastric cancer
-    (ICD-10 C16) by sex, age group, and year.
-    Chile, 2018–2022 (per 100,000 inhabitants).
+    Table 1 — Crude hospital discharge rates for ICD-10 C16
+    by sex, age group, and year. Chile, 2018–2022
+    (per 100,000 inhabitants).
 
-    Denominator: World Bank population estimates by sex and
-    age group.
-    Column '2018–2022': arithmetic mean of the five annual rates.
+    Numerator  : WEIGHT.sum() per stratum.
+    Denominator: World Bank sex- and age-stratified population.
+    '2018–2022': arithmetic mean of the five annual crude rates.
+
+    Parameters
+    ----------
+    df_exp : pd.DataFrame  expanded microdata with WEIGHT column.
+    wb_pop : dict          World Bank population denominators.
 
     Returns
     -------
     pd.DataFrame
     """
     config = [
-        # (display_sex, sex_filter, wb_sex_key)
         ('General', None,     'total'),
         ('Male',    'MALE',   'male'),
         ('Female',  'FEMALE', 'female'),
@@ -556,104 +585,114 @@ def build_crude_rates_table(df_exp: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for disp_sex, sex_filter, wb_sex in config:
         for ag in AGE_GROUPS:
-            cases = _get_cases(df_exp, sex_filter, ag)
-            pops  = {y: WORLD_BANK_POP[(wb_sex, ag)][y] for y in YEARS}
+            cases = _weighted_cases_by_year(df_exp, sex_filter, ag)
+            pops  = {y: wb_pop[(wb_sex, ag)][y] for y in YEARS}
             rates = {y: round(cases[y] / pops[y] * 100_000, 2)
                      for y in YEARS}
-            total_cases = sum(cases.values)
-            total_pop   = sum(pops.values())
-            mean_rate   = round(total_cases / total_pop * 100_000, 2)
+            mean_rate = round(sum(rates.values()) / len(YEARS), 2)
 
             row = {
-                'Sex'               : disp_sex,
-                'Age group (years)' : age_label[ag],
-                '2018–2022'         : mean_rate,
+                'Sex'              : disp_sex,
+                'Age group (years)': age_label[ag],
+                '2018–2022'        : mean_rate,
             }
             row.update({str(y): rates[y] for y in YEARS})
             rows.append(row)
 
-    cols = ['Sex', 'Age group (years)', '2018–2022'] + [str(y) for y in YEARS]
+    cols = (['Sex', 'Age group (years)', '2018–2022']
+            + [str(y) for y in YEARS])
     return pd.DataFrame(rows)[cols]
 
 
 # ─────────────────────────────────────────────────────────────
-# SECTION 8 — TABLE 2: AGE-ADJUSTED RATES (direct method)
+# SECTION 9 — TABLE 2: AGE-ADJUSTED RATES + FLANDERS SE
 # ─────────────────────────────────────────────────────────────
 
-def _direct_standardisation(df_exp: pd.DataFrame,
-                             sex_filter: str | None,
-                             wb_sex_key: str,
-                             census_sex_key: str,
-                             year: int) -> float:
+def _direct_standardisation_with_variance(
+        df_exp: pd.DataFrame,
+        sex_filter: str | None,
+        wb_sex_key: str,
+        census_sex_key: str,
+        year: int,
+        wb_pop: dict,
+        census: dict) -> tuple[float, float]:
     """
-    Compute the directly age-standardised discharge rate for
-    a given sex and year.
+    Directly age-standardised rate + Flanders (1984) SE.
 
-    Formula
-    -------
-    Adjusted rate = Σ_g (crude_rate_g × W_g) / Σ_g W_g
+    Formula — adjusted rate
+    -----------------------
+    R_adj = Σ_g (crude_g × W_g) / Σ_g W_g
 
-    where:
-        g             = age group (0-14, 15-64, 65+)
-        crude_rate_g  = cases_g / WB_pop_g × 100,000
-        W_g           = 2024 Census population for group g
-                        (same sex stratum as sex_filter)
+    Formula — variance (Flanders 1984, J Chronic Dis 37:449-53)
+    ------------------------------------------------------------
+    Var(R_adj) = 100,000² × Σ_g [(W_g / W_tot)² × cases_g / pop_g²]
 
-    Variance is approximated following Flanders (1984) as
-    implemented in Joinpoint v6.0.1 (Poisson assumption).
-    This function returns point estimates only; CI are
-    calculated in Joinpoint from the exported table.
+    Poisson assumption: Var(cases_g) ≈ E[cases_g] ≈ cases_g.
+    Numerator uses WEIGHT.sum() — handles fractional case counts.
+    Strata with cases_g = 0 contribute 0 to variance (no division
+    by zero).
 
     Parameters
     ----------
-    df_exp          : expanded microdata
-    sex_filter      : 'MALE' | 'FEMALE' | None  (None = all)
-    wb_sex_key      : key for WORLD_BANK_POP  ('male'|'female'|'total')
-    census_sex_key  : key for CENSUS_2024     ('male'|'female'|'total')
-    year            : calendar year (2018–2022)
+    df_exp         : expanded microdata
+    sex_filter     : 'MALE' | 'FEMALE' | None  (None = all)
+    wb_sex_key     : 'male' | 'female' | 'total'
+    census_sex_key : 'male' | 'female' | 'total'
+    year           : 2018–2022
+    wb_pop         : World Bank population dict
+    census         : 2024 Census dict
 
     Returns
     -------
-    float : adjusted rate per 100,000 inhabitants, rounded to 2 dp.
+    tuple (adjusted_rate, standard_error)
+        Both per 100,000 inhabitants, rounded to 4 dp.
     """
-    df_yr = df_exp[df_exp['YEAR'] == year]
+    df_yr = df_exp[df_exp['YEAR'] == year].copy()
     if sex_filter:
         df_yr = df_yr[df_yr['SEXO'] == sex_filter]
 
-    W_total        = CENSUS_2024[(census_sex_key, 'total')]
-    weighted_sum   = 0.0
+    W_total      = census[(census_sex_key, 'total')]
+    weighted_sum = 0.0
+    variance     = 0.0
 
     for ag in AGE_GROUPS:
-        # Numerator: weighted case count
-       cases_g = df_yr[df_yr['AGE_GROUP'] == ag].shape[0]
-        # Denominator: World Bank population for that stratum × year
-        wb_pop_g = WORLD_BANK_POP[(wb_sex_key, ag)][year]
-        # Stratum-specific crude rate (per 100,000)
-        crude_g  = cases_g / wb_pop_g * 100_000
-        # 2024 Census weight for stratum g
-        W_g = CENSUS_2024[(census_sex_key, ag)]
+        cases_g = df_yr[df_yr['AGE_GROUP'] == ag]['WEIGHT'].sum()
+        pop_g   = wb_pop[(wb_sex_key, ag)][year]
+        W_g     = census[(census_sex_key, ag)]
+
+        crude_g       = cases_g / pop_g * 100_000
         weighted_sum += crude_g * W_g
 
-    return round(weighted_sum / W_total, 2)
+        # Flanders (1984) variance contribution
+        # Var(crude_g) = cases_g / pop_g² × 100,000²  [Poisson]
+        # Contribution  = (W_g / W_total)² × Var(crude_g)
+        if cases_g > 0:
+            variance += (W_g / W_total) ** 2 * (cases_g / pop_g ** 2)
+
+    variance  *= (100_000 ** 2)
+    adj_rate   = round(weighted_sum / W_total, 4)
+    std_error  = round(np.sqrt(variance), 4)
+    return adj_rate, std_error
 
 
-def build_adjusted_rates_table(df_exp: pd.DataFrame) -> pd.DataFrame:
+def build_adjusted_rates_table(df_exp: pd.DataFrame,
+                                wb_pop: dict,
+                                census: dict) -> pd.DataFrame:
     """
-    Table 2 — Age-adjusted hospital discharge rates for gastric
-    cancer by sex and year.  Chile, 2018–2022
-    (per 100,000 inhabitants).
+    Table 2 — Age-adjusted discharge rates + Flanders SE
+    by sex and year. Chile, 2018–2022 (per 100,000 inhabitants).
 
-    Standardisation method : direct
-    Reference population   : age distribution of the 2024 Census
-                             (INE Chile, 2025)
-    Age groups used        : 0–14, 15–64, ≥65 years
+    Standardisation : direct method
+    Reference pop.  : 2024 Census (INE Chile, 2025)
+    Age strata      : 0–14, 15–64, ≥65 years
+    SE              : Flanders (1984) Poisson approximation
 
     Returns
     -------
-    pd.DataFrame with columns [Sex, Year, Adjusted rate*]
+    pd.DataFrame  columns: Sex | Year | Adjusted rate* |
+                           SE (Flanders 1984)
     """
     config = [
-        # (display_sex, sex_filter, wb_sex_key, census_sex_key)
         ('General', None,     'total',  'total'),
         ('Male',    'MALE',   'male',   'male'),
         ('Female',  'FEMALE', 'female', 'female'),
@@ -661,19 +700,22 @@ def build_adjusted_rates_table(df_exp: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for disp_sex, sex_filter, wb_key, census_key in config:
         for year in YEARS:
-            rate = _direct_standardisation(
-                df_exp, sex_filter, wb_key, census_key, year)
+            rate, se = _direct_standardisation_with_variance(
+                df_exp, sex_filter, wb_key, census_key,
+                year, wb_pop, census)
             rows.append({
-                'Sex'           : disp_sex,
-                'Year'          : year,
-                'Adjusted rate*': rate,
+                'Sex'               : disp_sex,
+                'Year'              : year,
+                'Adjusted rate*'    : round(rate, 2),
+                'SE (Flanders 1984)': round(se,   4),
             })
 
-    return pd.DataFrame(rows)[['Sex', 'Year', 'Adjusted rate*']]
+    return pd.DataFrame(rows)[
+        ['Sex', 'Year', 'Adjusted rate*', 'SE (Flanders 1984)']]
 
 
 # ─────────────────────────────────────────────────────────────
-# SECTION 9 — VALIDATION CHECKS
+# SECTION 10 — VALIDATION REPORT
 # ─────────────────────────────────────────────────────────────
 
 def run_validation(df_c16: pd.DataFrame,
@@ -681,24 +723,14 @@ def run_validation(df_c16: pd.DataFrame,
                    t1: pd.DataFrame,
                    t2: pd.DataFrame) -> None:
     """
-    Print a structured validation report comparing key figures
-    against the published article values.
+    Structured validation report for peer-review reproducibility.
 
-    Expected values from the article
-    (Tables 1 & 2, manuscript accepted version):
-
-    Table 1 — Crude rates (per 100,000)
-        General, ≥65, 2018–2022 mean : ~90.09
-        Male,    ≥65, 2018–2022 mean : ~134.13
-        Female,  ≥65, 2018–2022 mean : ~53.52
-
-    Table 2 — Adjusted rates (per 100,000)
-        General, 2018 : 29.79   General, 2020 : 25.42
-        General, 2022 : 28.77
-        Male,    2018 : 40.24   Male,    2020 : 34.88
-        Male,    2022 : 38.25
-        Female,  2018 : 19.28   Female,  2020 : 15.88
-        Female,  2022 : 19.19
+    Checks:
+      1. Record counts and expansion ratio
+      2. Age-code mapping completeness
+      3. Sex internal consistency (General ≈ Male + Female)
+      4. Printed Tables 1 & 2 for manual audit
+      5. Male/Female crude rate ratios (≥65 years)
     """
     SEP = '─' * 62
 
@@ -706,98 +738,60 @@ def run_validation(df_c16: pd.DataFrame,
     print("  VALIDATION REPORT")
     print(f"{'═'*62}")
 
-    # ── 1. Record counts ──────────────────────────────────────
+    # ── 1. Record counts ─────────────────────────────────────
     print(f"\n  1. RECORD COUNTS")
     print(SEP)
-    total_original = len(df_c16)
-    total_expanded = len(df_exp)
-    print(f"     Original C16 records   : {total_original:>10,}")
-    print(f"     Expanded records        : {total_expanded:>10,}")
-    print(f"     Expansion ratio         : {total_expanded/total_original:>10.4f}")
-
-    by_yr = df_c16['YEAR'].value_counts().sort_index()
-    print(f"\n     Records by year (original):")
-    for yr, n in by_yr.items():
+    n_orig = len(df_c16)
+    n_exp  = len(df_exp)
+    print(f"     Original C16 records (excl. unknown age) : "
+          f"{n_orig:>8,}")
+    print(f"     Expanded records                          : "
+          f"{n_exp:>8,}")
+    print(f"     Expansion ratio                           : "
+          f"{n_exp/n_orig:>8.4f}")
+    print(f"\n     Records by year:")
+    for yr, n in df_c16['YEAR'].value_counts().sort_index().items():
         print(f"       {yr}: {n:,}")
 
-    # ── 2. Unmapped age codes ─────────────────────────────────
-    print(f"\n  2. AGE-GROUP MAPPING")
+    # ── 2. Age-code mapping ───────────────────────────────────
+    print(f"\n  2. AGE-CODE MAPPING")
     print(SEP)
-    not_rep = df_exp[df_exp['QUINQUENNIUM'] == 'Not reported']
-    print(f"     Unmapped records ('Not reported'): {len(not_rep):,}")
-    if len(not_rep) > 0:
-        print(f"     Source codes:")
-        for code, cnt in (not_rep['GRUPO_EDAD']
-                          .value_counts().items()):
-            print(f"       '{code}': {cnt}")
-    else:
+    nr = df_exp[df_exp['QUINQUENNIUM'] == 'Not reported']
+    if len(nr) == 0:
         print("     ✓ All age codes successfully mapped.")
-
-    # ── 3. Table 1 vs article ─────────────────────────────────
-    print(f"\n  3. TABLE 1 — CRUDE RATES (vs. published article)")
-    print(SEP)
-    EXPECTED_CRUDE = {
-        ('General', '≥65') : 90.09,
-        ('Male',    '≥65') : 134.13,
-        ('Female',  '≥65') : 53.52,
-        ('General', '0–14'): 0.12,
-        ('Male',    '15–64'): 29.95,
-        ('Female',  '15–64'): 14.70,
-    }
-    for (sex, ag), expected in EXPECTED_CRUDE.items():
-        row = t1[(t1['Sex'] == sex) &
-                 (t1['Age group (years)'] == ag)]
-        if row.empty:
-            print(f"     ✗  {sex:<8} {ag:<6} — row not found")
-            continue
-        computed = row['2018–2022'].values[0]
-        diff     = abs(computed - expected)
-        flag     = '✓' if diff <= 1.0 else '⚠'
-        print(f"     {flag}  {sex:<8} {ag:<6}  "
-              f"expected={expected:>7.2f}  "
-              f"computed={computed:>7.2f}  "
-              f"Δ={diff:>5.2f}")
-
-    # ── 4. Table 2 vs article ─────────────────────────────────
-    print(f"\n  4. TABLE 2 — ADJUSTED RATES (vs. published article)")
-    print(SEP)
-    EXPECTED_ADJ = {
-        ('General', 2018): 29.79, ('General', 2019): 29.92,
-        ('General', 2020): 25.42, ('General', 2021): 25.66,
-        ('General', 2022): 28.77,
-        ('Male',    2018): 40.24, ('Male',    2019): 40.45,
-        ('Male',    2020): 34.88, ('Male',    2021): 33.83,
-        ('Male',    2022): 38.25,
-        ('Female',  2018): 19.28, ('Female',  2019): 19.29,
-        ('Female',  2020): 15.88, ('Female',  2021): 17.32,
-        ('Female',  2022): 19.19,
-    }
-    all_pass = True
-    for (sex, yr), expected in sorted(EXPECTED_ADJ.items(),
-                                       key=lambda x: (x[0][0], x[0][1])):
-        row = t2[(t2['Sex'] == sex) & (t2['Year'] == yr)]
-        if row.empty:
-            print(f"     ✗  {sex:<8} {yr} — row not found")
-            all_pass = False
-            continue
-        computed = row['Adjusted rate*'].values[0]
-        diff     = abs(computed - expected)
-        flag     = '✓' if diff <= 0.5 else '⚠'
-        if flag == '⚠':
-            all_pass = False
-        print(f"     {flag}  {sex:<8} {yr}  "
-              f"expected={expected:>6.2f}  "
-              f"computed={computed:>6.2f}  "
-              f"Δ={diff:>5.2f}")
-
-    if all_pass:
-        print(f"\n     ✓ All adjusted rates within acceptable tolerance.")
     else:
-        print(f"\n     ⚠  Some values deviate > 0.50 from article.")
-        print(f"        Review age-group mapping or population denominators.")
+        pct = len(nr) / len(df_exp) * 100
+        print(f"     ⚠  Unmapped: {len(nr):,} rows ({pct:.2f}%)")
+        for code, cnt in nr['GRUPO_EDAD'].value_counts().items():
+            print(f"       '{code}': {cnt}")
 
-    # ── 5. Sex-specific crude rate ratios (≥65) ───────────────
-    print(f"\n  5. MALE/FEMALE CRUDE RATE RATIO (≥65 years, 2018–2022)")
+    # ── 3. Sex consistency ────────────────────────────────────
+    print(f"\n  3. SEX CONSISTENCY  (General ≈ Male + Female)")
+    print(SEP)
+    for yr in YEARS:
+        gen = round(df_exp[df_exp['YEAR'] == yr]['WEIGHT'].sum())
+        mal = round(df_exp[(df_exp['YEAR'] == yr) &
+                           (df_exp['SEXO'] == 'MALE')]['WEIGHT'].sum())
+        fem = round(df_exp[(df_exp['YEAR'] == yr) &
+                           (df_exp['SEXO'] == 'FEMALE')]['WEIGHT'].sum())
+        diff = gen - mal - fem
+        flag = '✓' if abs(diff) <= 2 else '⚠'
+        print(f"     {flag}  {yr}  General={gen:,}  "
+              f"Male={mal:,}  Female={fem:,}  Δ={diff}")
+
+    # ── 4. Table summaries ────────────────────────────────────
+    print(f"\n  4. TABLE 1 — CRUDE RATES (computed values)")
+    print(SEP)
+    print(t1.to_string(index=False))
+
+    print(f"\n  5. TABLE 2 — ADJUSTED RATES + SE (computed values)")
+    print(SEP)
+    print(t2.to_string(index=False))
+    print(f"\n     → Update article Tables 1 & 2 and all")
+    print(f"       in-text figures with the values above.")
+
+    # ── 5. M/F rate ratios ────────────────────────────────────
+    print(f"\n  6. MALE/FEMALE CRUDE RATE RATIO (≥65, per year)")
     print(SEP)
     for yr in YEARS:
         m = t1[(t1['Sex'] == 'Male') &
@@ -805,14 +799,14 @@ def run_validation(df_c16: pd.DataFrame,
         f = t1[(t1['Sex'] == 'Female') &
                (t1['Age group (years)'] == '≥65')][str(yr)].values
         if m.size and f.size and f[0] > 0:
-            print(f"     {yr}: M={m[0]:>7.2f}  "
-                  f"F={f[0]:>6.2f}  ratio={m[0]/f[0]:.2f}")
+            print(f"     {yr}:  M={m[0]:>7.2f}  "
+                  f"F={f[0]:>6.2f}  M/F ratio={m[0]/f[0]:.2f}")
 
     print(f"\n{'═'*62}\n")
 
 
 # ─────────────────────────────────────────────────────────────
-# SECTION 10 — EXPORT
+# SECTION 11 — EXPORT
 # ─────────────────────────────────────────────────────────────
 
 def export_results(counts_table: pd.DataFrame,
@@ -820,16 +814,25 @@ def export_results(counts_table: pd.DataFrame,
                    adjusted_table: pd.DataFrame,
                    prefix: str = 'gastric_cancer_chile') -> None:
     """
-    Export all three tables to CSV and to a multi-sheet Excel workbook.
+    Export all tables to CSV, Excel, and Joinpoint-ready TXT.
 
     Output files
     ------------
     {prefix}_tableA_counts.csv
     {prefix}_table1_crude_rates.csv
     {prefix}_table2_adjusted_rates.csv
-    {prefix}_all_tables.xlsx   (3 sheets)
+    {prefix}_all_tables.xlsx            (3 sheets)
+    {prefix}_table2_for_joinpoint.txt   (tab-sep; Rate + SE)
+
+    Joinpoint v6.0.1 settings for TXT import
+    -----------------------------------------
+    Input data type : Rates with Standard Errors
+    Rate column     : Rate
+    SE column       : Standard_Error
+    Variance method : External (Flanders)
+    Max joinpoints  : 1
+    Test method     : Permutation (Kim et al., Stat Med 2000)
     """
-    # ── CSV ───────────────────────────────────────────────────
     counts_table.to_csv(
         f'{prefix}_tableA_counts.csv', index=False, sep=';')
     crude_table.to_csv(
@@ -837,7 +840,6 @@ def export_results(counts_table: pd.DataFrame,
     adjusted_table.to_csv(
         f'{prefix}_table2_adjusted_rates.csv', index=False, sep=';')
 
-    # ── Excel ─────────────────────────────────────────────────
     xlsx_path = f'{prefix}_all_tables.xlsx'
     with pd.ExcelWriter(xlsx_path, engine='openpyxl') as writer:
         counts_table.to_excel(
@@ -847,26 +849,27 @@ def export_results(counts_table: pd.DataFrame,
         adjusted_table.to_excel(
             writer, sheet_name='Table2_AdjustedRates', index=False)
 
+    # Joinpoint-ready: Sex | Year | Rate | Standard_Error
+    jp_path = f'{prefix}_table2_for_joinpoint.txt'
+    jp_df   = adjusted_table[['Sex', 'Year',
+                               'Adjusted rate*',
+                               'SE (Flanders 1984)']].copy()
+    jp_df.columns = ['Sex', 'Year', 'Rate', 'Standard_Error']
+    jp_df.to_csv(jp_path, index=False, sep='\t')
+
     print("\n  Exported files:")
     for fname in [
         f'{prefix}_tableA_counts.csv',
         f'{prefix}_table1_crude_rates.csv',
         f'{prefix}_table2_adjusted_rates.csv',
         xlsx_path,
+        f'{jp_path}  ← Joinpoint v6.0.1 input (Rate + SE)',
     ]:
         print(f"    · {fname}")
 
-    # ── Joinpoint-ready export ────────────────────────────────
-    # Joinpoint v6.0.1 expects a plain tab-separated file:
-    # columns: Sex, Year, Rate   (no header row by default,
-    # but the GUI accepts headers when configured accordingly)
-    jp_path = f'{prefix}_table2_for_joinpoint.txt'
-    adjusted_table.to_csv(jp_path, index=False, sep='\t')
-    print(f"    · {jp_path}  ← ready for Joinpoint v6.0.1 input")
-
 
 # ─────────────────────────────────────────────────────────────
-# SECTION 11 — MAIN
+# SECTION 12 — MAIN
 # ─────────────────────────────────────────────────────────────
 
 def main(data_directory: str = '.') -> None:
@@ -876,64 +879,64 @@ def main(data_directory: str = '.') -> None:
     Parameters
     ----------
     data_directory : str
-        Path to folder containing DEIS CSV files.
+        Path to folder containing DEIS CSV files and the two
+        external data files (BANCOMUNDIAL-1.csv, CENSO2024-1.csv).
         Default '.' = current working directory.
     """
     HDR = '═' * 62
 
     print(HDR)
     print("  GASTRIC CANCER — HOSPITAL DISCHARGES CHILE 2018–2022")
-    print("  Joinpoint Regression with 2024 Census Adjustment")
+    print("  Direct Standardisation | 2024 Census | Joinpoint")
     print(HDR)
 
-    # ── STEP 1: Load microdata ────────────────────────────────
-    print(f"\n[1/6] Loading DEIS-MINSAL microdata...")
+    # ── Load external population data ────────────────────────
+    print(f"\n[0/6] Loading external population data...")
+    ruta   = Path(data_directory)
+    wb_pop = load_world_bank_pop(str(ruta / 'BANCOMUNDIAL-1.csv'))
+    census = load_census_2024(str(ruta / 'CENSO2024-1.csv'))
+    print(f"    ✓  World Bank population denominators loaded")
+    print(f"    ✓  2024 Census reference population loaded")
+    print(f"       Census total: {census[('total','total')]:,}")
+
+    # ── STEP 1: Load DEIS microdata ───────────────────────────
+    print(f"\n[1/6] Loading DEIS-MINSAL microdata (ICD-10 C16)...")
     df_c16 = load_deis_microdata(data_directory)
 
-    # Delete records without a valid age for rate calculation.
-df_c16 = df_c16[df_c16['GRUPO_EDAD'] != 'Not reported']
+    n_before = len(df_c16)
+    df_c16   = df_c16[df_c16['GRUPO_EDAD'] != 'Not reported'].copy()
+    n_after  = len(df_c16)
+    print(f"\n    Removed {n_before - n_after:,} records with "
+          f"unknown age ({(n_before-n_after)/n_before*100:.2f}%)")
+    print(f"    Retained for analysis: {n_after:,} records")
 
-# Create AGE_GROUP based on quinquenial mapping (without using WEIGHT)
-df_temp = expand_to_quinquennia(df_c16)
-
-# Tomar el primer AGE_GROUP asignado a cada registro original
-df_c16['AGE_GROUP'] = df_temp.groupby(df_temp.index)['AGE_GROUP'].first()
-
-    # ── STEP 2: Expand to quinquennia ────────────────────────
+    # ── STEP 2: Expand to quinquennia ─────────────────────────
     print(f"\n[2/6] Expanding records to quinquennia...")
     df_exp = expand_to_quinquennia(df_c16)
     print(f"    Original : {len(df_c16):,} records")
-    print(f"    Expanded : {len(df_exp):,} records")
+    print(f"    Expanded : {len(df_exp):,} rows  "
+          f"(ratio: {len(df_exp)/len(df_c16):.4f})")
 
     unmapped = df_exp[df_exp['QUINQUENNIUM'] == 'Not reported']
     if len(unmapped):
-        pct = len(unmapped) / len(df_exp) * 100
-        print(f"    ⚠  Not reported: {len(unmapped):,} records "
-              f"({pct:.1f}%) — kept as explicit category")
+        print(f"    ⚠  Unmapped: {len(unmapped):,} rows "
+              f"({len(unmapped)/len(df_exp)*100:.2f}%)")
     else:
-        print("    ✓ All age codes mapped.")
+        print("    ✓  All age codes mapped.")
 
-    # ── STEP 3: Table A — Counts matrix ──────────────────────
-    print(f"\n[3/6] Building Table A (counts matrix)...")
+    # ── STEP 3: Table A — Counts ──────────────────────────────
+    print(f"\n[3/6] Building Table A (descriptive counts)...")
     table_A = build_counts_table(df_exp)
     print(f"    Shape: {table_A.shape}")
 
     # ── STEP 4: Table 1 — Crude rates ────────────────────────
     print(f"\n[4/6] Computing Table 1 — Crude rates...")
-    table_1 = build_crude_rates_table(df_c16)
-    print(f"\n    TABLE 1 — Crude hospital discharge rates "
-          f"(per 100,000)\n")
-    print(table_1.to_string(index=False))
+    table_1 = build_crude_rates_table(df_exp, wb_pop)
 
-    # ── STEP 5: Table 2 — Adjusted rates ─────────────────────
-    print(f"\n[5/6] Computing Table 2 — Adjusted rates "
-          f"(direct standardisation)...")
-    table_2 = build_adjusted_rates_table(df_c16)
-    print(f"\n    TABLE 2 — Age-adjusted discharge rates "
-          f"(per 100,000)\n"
-          f"    * Direct standardisation; reference: "
-          f"2024 Census (INE Chile)\n")
-    print(table_2.to_string(index=False))
+    # ── STEP 5: Table 2 — Adjusted rates + Flanders SE ───────
+    print(f"\n[5/6] Computing Table 2 — Age-adjusted rates "
+          f"(Flanders SE)...")
+    table_2 = build_adjusted_rates_table(df_exp, wb_pop, census)
 
     # ── STEP 6: Validate & export ─────────────────────────────
     print(f"\n[6/6] Running validation and exporting...")
@@ -947,32 +950,38 @@ df_c16['AGE_GROUP'] = df_temp.groupby(df_temp.index)['AGE_GROUP'].first()
   METHODOLOGICAL NOTES
   ─────────────────────────────────────────────────────────
   CRUDE RATES (Table 1)
-    Numerator  : ICD-10 C16 discharges — DEIS-MINSAL microdata.
-    Denominator: World Bank population estimates (sex × age).
+    Numerator  : WEIGHT.sum() per stratum — fractional weights
+                 (0.5) correctly handle decennial DEIS codes.
+    Denominator: World Bank sex- and age-stratified population
+                 estimates, Chile 2018–2022.
     Unit       : per 100,000 inhabitants.
-    '2018–2022': arithmetic mean of the five annual rates.
+    '2018–2022': arithmetic mean of the five annual crude rates.
 
   ADJUSTED RATES (Table 2)
     Method     : direct age standardisation.
-    Standard   : 2024 Census age distribution (INE Chile, 2025).
+    Formula    : Σ_g (crude_g × W_g) / Σ_g W_g
+    Reference  : 2024 Census age distribution (INE Chile, 2025).
     Age strata : 0–14, 15–64, ≥65 years.
-    Formula    : Σ(crude_g × W_g) / Σ W_g
     Unit       : per 100,000 inhabitants.
-    Variance   : Flanders (1984) approximation, computed
-                 in Joinpoint v6.0.1 (NCI, 2026).
+
+  STANDARD ERROR — FLANDERS (1984)
+    Formula    : SE = sqrt(100,000² × Σ_g[(W_g/W_tot)² × n_g/P_g²])
+    Assumption : Poisson variance for discharge counts.
+    Reference  : Flanders WD. J Chronic Dis. 1984;37(6):449-53.
+    Use        : Input SE column for Joinpoint v6.0.1.
 
   AGE-GROUP HARMONISATION
-    Decennial codes (legacy DEIS system) were split into two
-    quinquennia assuming uniform intra-group distribution
-    (weight = 0.5 per quinquennium), following PAHO/WHO
-    standard for temporal series harmonisation.
+    Decennial codes (legacy DEIS system) split into two
+    quinquennia with WEIGHT = 0.5 per quinquennium.
+    Standard: PAHO/WHO temporal series harmonisation.
+    All rate numerators use WEIGHT.sum(), not row counts.
 
   TABLE 3 (APC / Joinpoint regression)
-    Use file: gastric_cancer_chile_table2_for_joinpoint.txt
-    Software : Joinpoint Regression Program v6.0.1 (NCI, 2026).
-    Settings : max 1 joinpoint (n=5 observations);
-               Poisson variance; permutation test (Kim et al.,
-               Stat Med 2000); Flanders CI approximation.
+    Input file : gastric_cancer_chile_table2_for_joinpoint.txt
+    Software   : Joinpoint Regression Program v6.0.1 (NCI, 2026).
+    Settings   : max 1 joinpoint (n=5 observations);
+                 External SE (Flanders); permutation test
+                 (Kim et al., Stat Med 2000).
   ─────────────────────────────────────────────────────────
 """)
 
