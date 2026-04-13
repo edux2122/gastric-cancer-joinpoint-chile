@@ -2,7 +2,7 @@
 
 Pre‑processing code and construction of the analytical matrix for the study:
 
-> **"Stagnation of Hospital Burden from Gastric Cancer in Chile (2018–2022): Joinpoint Regression Analysis with Demographic Adjustment to the 2024 Census"**
+> **“Stagnation of Hospital Burden from Gastric Cancer in Chile (2018–2022): Joinpoint Regression Analysis with Demographic Adjustment to the 2024 Census”**
 
 ---
 
@@ -10,16 +10,16 @@ Pre‑processing code and construction of the analytical matrix for the study:
 
 This repository contains a **reproducible Python pipeline** to:
 
-- Consolidate hospital discharge microdata from DEIS-MINSAL (ICD-10 C16).  
-- Harmonise age groups (decades → quinquennia) using fractional weights.  
+- Consolidate hospital discharge microdata from DEIS‑MINSAL (ICD‑10 C16).
+- Harmonise age groups (decades → quinquennia) using fractional weights.
 - Build the analytical tables used in the manuscript:
 
-- **Table A** — Descriptive counts (quinquennium × sex × year).  
-- **Table 1** — Crude discharge rates per 100,000 inhabitants (World Bank denominators).  
-- **Table 2** — Age-adjusted rates + Flanders (1984) standard error using the 2024 Census as reference population.  
+- **Table A** — Descriptive counts (quinquennium × sex × year).
+- **Table 1** — Crude discharge rates per 100,000 inhabitants (World Bank denominators).
+- **Table 2** — Age‑adjusted rates + Flanders (1984) standard error using the 2024 Census as reference population.
 - **Joinpoint file** — Input for the Joinpoint Regression Program v6.0.1 (NCI, 2026).
 
-The script **does not perform inferential analysis** (Joinpoint regression); it only prepares the inputs for R/Joinpoint.
+The script **does not perform inferential analysis** (Joinpoint regression); it only prepares the inputs for Joinpoint.
 
 ---
 
@@ -39,7 +39,9 @@ Available at: <https://deis.minsal.cl>
 
 ---
 
-## Variables in the output matrix
+## Variables in the output tables
+
+Key variables used in the analytical tables:
 
 | Variable                   | Description                                                       | Original coding                     |
 |---------------------------|-------------------------------------------------------------------|-------------------------------------|
@@ -48,7 +50,7 @@ Available at: <https://deis.minsal.cl>
 | `CONDICION_EGRESO`        | Condition at discharge (in‑hospital lethality)                   | 1 = Alive, 2 = Dead                 |
 | `SEXO`                    | Patient sex                                                       | HOMBRE / MUJER                      |
 
-The final table presents these variables stratified by **sex** (GENERAL, MALE, FEMALE) and **year** (2018, 2019, 2020, 2021, 2022, `TOTAL_5Y`), with counts per category.
+The final tables present these variables stratified by **sex** (GENERAL, MALE, FEMALE) and **year** (2018, 2019, 2020, 2021, 2022, `TOTAL_5Y`), with counts and rates per category.
 
 ---
 
@@ -56,8 +58,8 @@ The final table presents these variables stratified by **sex** (GENERAL, MALE, F
 
 DEIS files use two different age‑coding systems depending on the year:
 
-- **New system** (quinquennia): directly mapped to the corresponding quinquennium.  
-- **Legacy system** (decades: `"20 a 29"`, `"30 a 39"`, etc.): redistributed into **two quinquennia** assuming a **uniform within‑decade distribution** (weight = 0.5 per quinquennium), following the PAHO/WHO standard for harmonising time series with coding changes.
+- **New system** (quinquennia): directly mapped to the corresponding quinquennium.
+- **Legacy system** (decades: `"20 a 29"`, `"30 a 39"`, etc.): redistributed into **two quinquennia** assuming a **uniform within‑decade distribution** (weight = 0.5 per quinquennium), following PAHO/WHO recommendations for harmonising time series with coding changes.
 
 Paediatric groups (younger than 7 days, 28 days to 2 months, 2 months to 1 year, 1–4 years) are collapsed into `00–04 years`. Records without a valid age group are kept as `Not reported`.
 
@@ -77,12 +79,16 @@ Paediatric groups (younger than 7 days, 28 days to 2 months, 2 months to 1 year,
     └── gastric_cancer_chile_table2_for_joinpoint.txt
 ```
 
+When you first clone the repository, the `outputs/` folder will be empty; it is populated by running `Code.py`.
+
 ---
 
 ## Requirements
 
-- Python 3.x (Google Colab or local environment).  
+- Python 3.x (tested in **Google Colab** and local environments).
 - Libraries: `pandas`, `numpy`, `pathlib`, `openpyxl`.
+
+Install dependencies (local):
 
 ```bash
 pip install pandas numpy openpyxl
@@ -94,22 +100,24 @@ pip install pandas numpy openpyxl
 
 ### 1. Prepare DEIS data
 
-1. Download the CSV files from <https://deis.minsal.cl>.  
-2. Place the five files (`EGRE...2018`–`EGRE...2022`) in the working directory.
+1. Download the five DEIS CSV files from <https://deis.minsal.cl>.
+2. Place the files (`EGRE_DATOS_ABIERTOS_2018.csv`, …, `EGRE_DATOS_ABIERTOS_2022.csv`) in the working directory where you will run the script.
 
 ### 2. Run the pipeline
 
-**Local environment:**
+#### Local environment
+
+From the repository root:
 
 ```bash
 python Code.py
 ```
 
-**Google Colab:**
+#### Google Colab
 
-1. Upload `Code.py` or mount it from Google Drive.  
-2. Adjust the path in `main('.')` if needed.  
-3. Run:
+1. Upload `Code.py` or mount the repo from Google Drive.
+2. In **Section 0** of `Code.py`, mount Google Drive and set the working directory to the folder containing the DEIS CSV files (e.g. using `os.chdir()`).
+3. Then run:
 
 ```python
 !python Code.py
@@ -117,13 +125,13 @@ python Code.py
 
 The script will:
 
-- Load microdata filtered to ICD-10 C16 principal diagnosis.  
-- Expand records into quinquennia (weights 0.5 for decennial codes).  
-- Compute crude rates (Table 1) using World Bank denominators (2018–2022).  
-- Compute age‑adjusted rates and standard errors (Table 2) using the 2024 Census.  
+- Load microdata filtered to ICD‑10 C16 principal diagnosis.
+- Expand records into quinquennia (weights 0.5 for decennial codes).
+- Compute crude rates (Table 1) using World Bank denominators (2018–2022).
+- Compute age‑adjusted rates and standard errors (Table 2) using the 2024 Census.
 - Generate a `.txt` file ready to import into **Joinpoint v6.0.1** as “Rates with Standard Errors”.
 
-All outputs are written to `./outputs/` (or the current directory, depending on configuration).
+All outputs are written to `outputs/` (or the current directory, depending on configuration).
 
 ---
 
@@ -132,50 +140,73 @@ All outputs are written to `./outputs/` (or the current directory, depending on 
 The main script is organised into the following sections:
 
 - **Section 3 — Population data (hardcoded)**  
-  - **World Bank** denominators (Chile, 2018–2022) by sex and age group.  
+  - **World Bank** denominators (Chile, 2018–2022) by sex and age group.
   - **2024 Census** (INE Chile) reference population by sex and age group.
 
 - **Section 4 — Age mapping**  
-  - `DEIS_TO_QUINQUENNIUM`: maps `GRUPO_EDAD` categories to one or two quinquennia (`WEIGHT = 1.0` or `0.5`).  
+  - `DEIS_TO_QUINQUENNIUM`: maps `GRUPO_EDAD` categories to one or two quinquennia (`WEIGHT = 1.0` or `0.5`).
   - `QUINQUENNIUM_TO_AGEGROUP`: maps each quinquennium to an analytical group (`0–14`, `15–64`, `65+`).
 
 - **Section 7 — Table A (descriptive counts)**  
   - Builds a matrix of counts by sex, variable, and category (age, region, discharge condition).
 
 - **Section 8 — Table 1 (crude rates)**  
-  - Numerator: `WEIGHT.sum()` per stratum.  
-  - Denominator: World Bank population.  
-  - Unit: **per 100,000 inhabitants**.  
+  - Numerator: `WEIGHT.sum()` per stratum.
+  - Denominator: World Bank population.
+  - Unit: **per 100,000 inhabitants**.
   - `2018–2022` column: arithmetic mean of the five annual crude rates.
 
 - **Section 9 — Table 2 (age‑adjusted rates + SE)**  
-  - Method: **direct age standardisation** against the 2024 Census age distribution.  
-  - Variance: Flanders (1984) formula under a Poisson assumption.  
+  - Method: **direct age standardisation** against the 2024 Census age distribution.
+  - Variance: Flanders (1984) formula under a Poisson assumption.
   - Returns adjusted rate and standard error by sex and year.
 
 - **Section 10 — Validation**  
-  - Report with:  
-    - Record counts and expansion ratio.  
-    - Proportion of unmapped age codes.  
-    - Consistency check General ≈ Male + Female by year.  
-    - Printed crude and adjusted rates for manual auditing.  
+  - Report including:
+    - Record counts and expansion ratio.
+    - Proportion of unmapped age codes.
+    - Consistency check General ≈ Male + Female by year.
+    - Printed crude and adjusted rates for manual auditing.
     - Male/Female crude rate ratio in the ≥65 group.
 
 - **Section 11 — Export**  
-  - Exports all tables to `.csv` and `.xlsx`.  
+  - Exports all tables to `.csv` and `.xlsx`.
   - Generates `*_table2_for_joinpoint.txt` with columns `Sex`, `Year`, `Rate`, `Standard_Error`.
+
+---
+
+## Reproducing the joinpoint analysis
+
+The repository provides the **Joinpoint input file** but not the Joinpoint results themselves.
+
+To reproduce the trend analysis:
+
+1. Run `Code.py` to generate `gastric_cancer_chile_table2_for_joinpoint.txt` in the `outputs/` folder.
+2. Open **Joinpoint Regression Program v6.0.1** (NCI).
+3. Import the `.txt` file selecting:
+   - Input data type: **Rates with Standard Errors**.
+   - Rate column: `Rate`.
+   - Standard error column: `Standard_Error`.
+   - Variance method: **External (Flanders)**.
+4. Set analysis options:
+   - Maximum number of joinpoints: **0** (n = 5 annual observations).
+   - Model selection: **Permutation test** (Kim et al., Stat Med. 2000;19:335–351).
+5. Run the model and compare the annual percent change (APC) and confidence intervals with those reported in the manuscript.
 
 ---
 
 ## Citation
 
-If you use this code, please cite the associated article and the repository:
+If you use this code, please cite the associated study (when available) and this repository. A suggested placeholder citation is:
 
-> [Authors]. Stagnation of Hospital Burden from Gastric Cancer in Chile (2018–2022): Joinpoint Regression Analysis with Demographic Adjustment to the 2024 Census. [Journal, year]. DOI: [pending]. Code available at: <https://doi.org/10.5281/zenodo.19322588>
+> Marín Loayza ER, Garrido Rodríguez GE, Fuentes Bascuñán NA. Stagnation of Hospital Burden from Gastric Cancer in Chile (2018–2022): Joinpoint Regression Analysis with Demographic Adjustment to the 2024 Census. [Manuscript under review]. Code available at: <https://github.com/edux2122/gastric-cancer-joinpoint-chile>.
+
+You can update this text later with the **journal name** and **article DOI** once the manuscript is published.
 
 ---
 
 ## License
 
-This repository is distributed under the **MIT** license.  
-DEIS-MINSAL data are publicly available under Chilean transparency regulations.
+This repository is distributed under the **MIT License**.
+
+DEIS‑MINSAL data are publicly available under Chilean transparency regulations and must be obtained directly from the original source.
