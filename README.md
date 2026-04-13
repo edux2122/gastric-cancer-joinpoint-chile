@@ -201,7 +201,6 @@ If you use this code, please cite the associated study (when available) and this
 
 > Marín Loayza ER, Garrido Rodríguez GE, Fuentes Bascuñán NA. Stagnation of Hospital Burden from Gastric Cancer in Chile (2018–2022): Joinpoint Regression Analysis with Demographic Adjustment to the 2024 Census. [Manuscript under review]. Code available at: <https://github.com/edux2122/gastric-cancer-joinpoint-chile>.
 
-You can update this text later with the **journal name** and **article DOI** once the manuscript is published.
 
 ---
 
