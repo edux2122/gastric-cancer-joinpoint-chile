@@ -815,7 +815,7 @@ def export_results(counts_table: pd.DataFrame,
     Rate column     : Rate
     SE column       : Standard_Error
     Variance method : External (Stang & Gianicolo 2025)
-    Max joinpoints  : 1
+    Max joinpoints  : 0
     Test method     : Permutation (Kim et al., Stat Med 2000)
     """
     counts_table.to_csv(
