@@ -5,7 +5,7 @@
 # Outputs:
 #   Table A  — Descriptive counts (quinquennium × sex × year)
 #   Table 1  — Crude discharge rates (World Bank denominators)
-#   Table 2  — Age-adjusted rates + Flanders (1984) SE
+#   Table 2  — Age-adjusted rates + Stang A, Gianicolo E. (2025) SE
 #              (direct standardisation; 2024 Census reference)
 #   Table 3  → computed in Joinpoint v6.0.1 (NCI, 2026)
 #              input: {prefix}_table2_for_joinpoint.txt
@@ -17,7 +17,7 @@
 #     fractional case counts from decennial-coded records.
 #   · Direct standardisation: Σ_g(crude_g × W_g) / Σ_g W_g
 #     where W_g = 2024 Census sex-specific stratum population.
-#   · Variance: Flanders (1984) Poisson approximation.
+#   · Variance: Stang A, Gianicolo E. (2025) Poisson approximation.
 #     Var(R_adj) = 100,000² × Σ_g[(W_g/W_tot)² × cases_g/pop_g²]
 #   · '2018–2022' summary = arithmetic mean of annual rates
 #     (consistent with Joinpoint input series).
@@ -33,8 +33,7 @@
 #   3. Runtime → Run all.
 #
 # References:
-#   Flanders WD. Approximate variance formulas for standardized
-#   rate ratios. J Chronic Dis. 1984;37(6):449-53.
+#   Stang A, Gianicolo E. Dtsch Arztebl Int. 2025;122(14):387-92. doi:10.3238/arztebl.m2025.0072
 #   Kim HJ et al. Permutation tests for joinpoint regression.
 #   Stat Med. 2000;19(3):335-51.
 #
@@ -323,12 +322,12 @@ def load_deis_microdata(directory: str = '.') -> pd.DataFrame:
 
     missing = [y for y in YEARS if y not in loaded]
     if missing:
-        print(f"\n    ⚠  Missing years: {missing}")
+        print(f"\\n    ⚠  Missing years: {missing}")
 
     df_all = pd.concat(loaded.values(), ignore_index=True)
     df_c16 = df_all[df_all['DIAG1'].isin(ICD10_C16)].copy()
 
-    print(f"\n    Total C16 records : {len(df_c16):,}")
+    print(f"\\n    Total C16 records : {len(df_c16):,}")
     print(df_c16['YEAR'].value_counts().sort_index().to_string())
 
     for col in ['SEXO', 'GRUPO_EDAD',
@@ -599,7 +598,7 @@ def build_crude_rates_table(df_exp: pd.DataFrame) -> pd.DataFrame:
 
 
 # ─────────────────────────────────────────────────────────────
-# SECTION 9 — TABLE 2: AGE-ADJUSTED RATES + FLANDERS SE
+# SECTION 9 — TABLE 2: AGE-ADJUSTED RATES + STANG & GIANICOLO (2025) SE
 # ─────────────────────────────────────────────────────────────
 
 def _direct_standardisation_with_variance(
@@ -609,13 +608,14 @@ def _direct_standardisation_with_variance(
         census_sex_key: str,
         year: int) -> tuple[float, float]:
     """
-    Directly age-standardised rate + Flanders (1984) SE.
+    Directly age-standardised rate + Stang & Gianicolo (2025) SE.
 
     Formula — adjusted rate
     -----------------------
     R_adj = Σ_g (crude_g × W_g) / Σ_g W_g
 
-    Formula — variance (Flanders 1984, J Chronic Dis 37:449-53)
+    Formula — variance (Stang & Gianicolo 2025,
+                        Dtsch Arztebl Int 122(14):387-92)
     ------------------------------------------------------------
     Var(R_adj) = 100,000² × Σ_g [(W_g / W_tot)² × cases_g / pop_g²]
 
@@ -653,7 +653,7 @@ def _direct_standardisation_with_variance(
         crude_g       = cases_g / pop_g * 100_000
         weighted_sum += crude_g * W_g
 
-        # Flanders (1984): variance contribution of stratum g
+        # Stang & Gianicolo (2025): variance contribution of stratum g
         if cases_g > 0:
             variance += (W_g / W_total) ** 2 * (cases_g / pop_g ** 2)
 
@@ -665,18 +665,18 @@ def _direct_standardisation_with_variance(
 
 def build_adjusted_rates_table(df_exp: pd.DataFrame) -> pd.DataFrame:
     """
-    Table 2 — Age-adjusted discharge rates + Flanders SE
+    Table 2 — Age-adjusted discharge rates + Stang & Gianicolo (2025) SE
     by sex and year. Chile, 2018–2022 (per 100,000 inhabitants).
 
     Standardisation : direct method
     Reference pop.  : CENSUS_2024 (hardcoded, Section 3)
     Age strata      : 0–14, 15–64, ≥65 years
-    SE              : Flanders (1984) Poisson approximation
+    SE              : Stang & Gianicolo (2025) Poisson approximation
 
     Returns
     -------
     pd.DataFrame  columns: Sex | Year | Adjusted rate* |
-                           SE (Flanders 1984)
+                           SE (Stang & Gianicolo 2025)
     """
     config = [
         ('General', None,     'total',  'total'),
@@ -689,14 +689,14 @@ def build_adjusted_rates_table(df_exp: pd.DataFrame) -> pd.DataFrame:
             rate, se = _direct_standardisation_with_variance(
                 df_exp, sex_filter, wb_key, census_key, year)
             rows.append({
-                'Sex'               : disp_sex,
-                'Year'              : year,
-                'Adjusted rate*'    : round(rate, 2),
-                'SE (Flanders 1984)': round(se,   4),
+                'Sex'                          : disp_sex,
+                'Year'                         : year,
+                'Adjusted rate*'               : round(rate, 2),
+                'SE (Stang & Gianicolo 2025)'  : round(se,   4),
             })
 
     return pd.DataFrame(rows)[
-        ['Sex', 'Year', 'Adjusted rate*', 'SE (Flanders 1984)']]
+        ['Sex', 'Year', 'Adjusted rate*', 'SE (Stang & Gianicolo 2025)']]
 
 
 # ─────────────────────────────────────────────────────────────
@@ -719,12 +719,12 @@ def run_validation(df_c16: pd.DataFrame,
     """
     SEP = '─' * 62
 
-    print(f"\n{'═'*62}")
+    print(f"\\n{'═'*62}")
     print("  VALIDATION REPORT")
     print(f"{'═'*62}")
 
     # ── 1. Record counts ─────────────────────────────────────
-    print(f"\n  1. RECORD COUNTS")
+    print(f"\\n  1. RECORD COUNTS")
     print(SEP)
     n_orig = len(df_c16)
     n_exp  = len(df_exp)
@@ -734,12 +734,12 @@ def run_validation(df_c16: pd.DataFrame,
           f"{n_exp:>8,}")
     print(f"     Expansion ratio                           : "
           f"{n_exp/n_orig:>8.4f}")
-    print(f"\n     Records by year:")
+    print(f"\\n     Records by year:")
     for yr, n in df_c16['YEAR'].value_counts().sort_index().items():
         print(f"       {yr}: {n:,}")
 
     # ── 2. Age-code mapping ───────────────────────────────────
-    print(f"\n  2. AGE-CODE MAPPING")
+    print(f"\\n  2. AGE-CODE MAPPING")
     print(SEP)
     nr = df_exp[df_exp['QUINQUENNIUM'] == 'Not reported']
     if len(nr) == 0:
@@ -751,7 +751,7 @@ def run_validation(df_c16: pd.DataFrame,
             print(f"       '{code}': {cnt}")
 
     # ── 3. Sex consistency ────────────────────────────────────
-    print(f"\n  3. SEX CONSISTENCY  (General ≈ Male + Female)")
+    print(f"\\n  3. SEX CONSISTENCY  (General ≈ Male + Female)")
     print(SEP)
     for yr in YEARS:
         gen = round(df_exp[df_exp['YEAR'] == yr]['WEIGHT'].sum())
@@ -765,18 +765,18 @@ def run_validation(df_c16: pd.DataFrame,
               f"Male={mal:,}  Female={fem:,}  Δ={diff}")
 
     # ── 4. Table summaries ────────────────────────────────────
-    print(f"\n  4. TABLE 1 — CRUDE RATES (computed values)")
+    print(f"\\n  4. TABLE 1 — CRUDE RATES (computed values)")
     print(SEP)
     print(t1.to_string(index=False))
 
-    print(f"\n  5. TABLE 2 — ADJUSTED RATES + SE (computed values)")
+    print(f"\\n  5. TABLE 2 — ADJUSTED RATES + SE (computed values)")
     print(SEP)
     print(t2.to_string(index=False))
-    print(f"\n     → Update article Tables 1 & 2 and all")
+    print(f"\\n     → Update article Tables 1 & 2 and all")
     print(f"       in-text figures with the values above.")
 
     # ── 5. M/F rate ratios ────────────────────────────────────
-    print(f"\n  6. MALE/FEMALE CRUDE RATE RATIO (≥65, per year)")
+    print(f"\\n  6. MALE/FEMALE CRUDE RATE RATIO (≥65, per year)")
     print(SEP)
     for yr in YEARS:
         m = t1[(t1['Sex'] == 'Male') &
@@ -787,7 +787,7 @@ def run_validation(df_c16: pd.DataFrame,
             print(f"     {yr}:  M={m[0]:>7.2f}  "
                   f"F={f[0]:>6.2f}  M/F ratio={m[0]/f[0]:.2f}")
 
-    print(f"\n{'═'*62}\n")
+    print(f"\\n{'═'*62}\\n")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -814,7 +814,7 @@ def export_results(counts_table: pd.DataFrame,
     Input data type : Rates with Standard Errors
     Rate column     : Rate
     SE column       : Standard_Error
-    Variance method : External (Flanders)
+    Variance method : External (Stang & Gianicolo 2025)
     Max joinpoints  : 1
     Test method     : Permutation (Kim et al., Stat Med 2000)
     """
@@ -838,11 +838,11 @@ def export_results(counts_table: pd.DataFrame,
     jp_path = f'{prefix}_table2_for_joinpoint.txt'
     jp_df   = adjusted_table[['Sex', 'Year',
                                'Adjusted rate*',
-                               'SE (Flanders 1984)']].copy()
+                               'SE (Stang & Gianicolo 2025)']].copy()
     jp_df.columns = ['Sex', 'Year', 'Rate', 'Standard_Error']
-    jp_df.to_csv(jp_path, index=False, sep='\t')
+    jp_df.to_csv(jp_path, index=False, sep='\\t')
 
-    print("\n  Exported files:")
+    print("\\n  Exported files:")
     for fname in [
         f'{prefix}_tableA_counts.csv',
         f'{prefix}_table1_crude_rates.csv',
@@ -875,24 +875,24 @@ def main(data_directory: str = '.') -> None:
     print(HDR)
 
     # ── Population data summary ───────────────────────────────
-    print(f"\n[0/6] Population data (hardcoded constants)")
+    print(f"\\n[0/6] Population data (hardcoded constants)")
     print(f"    ✓  World Bank denominators  : 2018–2022, 3 strata × 3 sex")
     print(f"    ✓  2024 Census reference    : "
           f"{CENSUS_2024[('total','total')]:,} inhabitants")
 
     # ── STEP 1: Load DEIS microdata ───────────────────────────
-    print(f"\n[1/6] Loading DEIS-MINSAL microdata (ICD-10 C16)...")
+    print(f"\\n[1/6] Loading DEIS-MINSAL microdata (ICD-10 C16)...")
     df_c16 = load_deis_microdata(data_directory)
 
     n_before = len(df_c16)
     df_c16   = df_c16[df_c16['GRUPO_EDAD'] != 'Not reported'].copy()
     n_after  = len(df_c16)
-    print(f"\n    Removed {n_before - n_after:,} records with "
+    print(f"\\n    Removed {n_before - n_after:,} records with "
           f"unknown age ({(n_before-n_after)/n_before*100:.2f}%)")
     print(f"    Retained for analysis: {n_after:,} records")
 
     # ── STEP 2: Expand to quinquennia ─────────────────────────
-    print(f"\n[2/6] Expanding records to quinquennia...")
+    print(f"\\n[2/6] Expanding records to quinquennia...")
     df_exp = expand_to_quinquennia(df_c16)
     print(f"    Original : {len(df_c16):,} records")
     print(f"    Expanded : {len(df_exp):,} rows  "
@@ -906,25 +906,25 @@ def main(data_directory: str = '.') -> None:
         print("    ✓  All age codes mapped.")
 
     # ── STEP 3: Table A — Counts ──────────────────────────────
-    print(f"\n[3/6] Building Table A (descriptive counts)...")
+    print(f"\\n[3/6] Building Table A (descriptive counts)...")
     table_A = build_counts_table(df_exp)
     print(f"    Shape: {table_A.shape}")
 
     # ── STEP 4: Table 1 — Crude rates ────────────────────────
-    print(f"\n[4/6] Computing Table 1 — Crude rates...")
+    print(f"\\n[4/6] Computing Table 1 — Crude rates...")
     table_1 = build_crude_rates_table(df_exp)
 
-    # ── STEP 5: Table 2 — Adjusted rates + Flanders SE ───────
-    print(f"\n[5/6] Computing Table 2 — Age-adjusted rates "
-          f"(Flanders SE)...")
+    # ── STEP 5: Table 2 — Adjusted rates + Stang & Gianicolo SE ──
+    print(f"\\n[5/6] Computing Table 2 — Age-adjusted rates "
+          f"(Stang & Gianicolo 2025 SE)...")
     table_2 = build_adjusted_rates_table(df_exp)
 
     # ── STEP 6: Validate & export ─────────────────────────────
-    print(f"\n[6/6] Running validation and exporting...")
+    print(f"\\n[6/6] Running validation and exporting...")
     run_validation(df_c16, df_exp, table_1, table_2)
     export_results(table_A, table_1, table_2)
 
-    print(f"\n{HDR}")
+    print(f"\\n{HDR}")
     print("  PIPELINE COMPLETE")
     print(HDR)
     print("""
@@ -945,10 +945,13 @@ def main(data_directory: str = '.') -> None:
     Age strata : 0–14, 15–64, ≥65 years.
     Unit       : per 100,000 inhabitants.
 
-  STANDARD ERROR — FLANDERS (1984)
+  STANDARD ERROR — STANG & GIANICOLO (2025)
     Formula    : SE = sqrt(100,000² × Σ_g[(W_g/W_tot)² × n_g/P_g²])
     Assumption : Poisson variance for discharge counts.
-    Reference  : Flanders WD. J Chronic Dis. 1984;37(6):449-53.
+    Reference  : Stang A, Gianicolo E. Age standardization of
+                 epidemiological frequency measures.
+                 Dtsch Arztebl Int. 2025;122(14):387-92.
+                 doi:10.3238/arztebl.m2025.0072
     Use        : Standard_Error column in Joinpoint v6.0.1 input.
 
   AGE-GROUP HARMONISATION
@@ -960,9 +963,9 @@ def main(data_directory: str = '.') -> None:
   TABLE 3 (APC / Joinpoint regression)
     Input file : gastric_cancer_chile_table2_for_joinpoint.txt
     Software   : Joinpoint Regression Program v6.0.1 (NCI, 2026).
-    Settings   : max 1 joinpoint (n=5 observations);
-                 External SE (Flanders); permutation test
-                 (Kim et al., Stat Med 2000).
+    Settings   : max 0 joinpoints (n=5 observations);
+                 External SE (Stang & Gianicolo 2025);
+                 permutation test (Kim et al., Stat Med 2000).
   ─────────────────────────────────────────────────────────
 """)
 
