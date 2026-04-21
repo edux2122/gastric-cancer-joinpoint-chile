@@ -2,7 +2,7 @@
 
 Pre‑processing code and construction of the analytical matrix for the study:
 
-> **“Stagnation of Hospital Burden from Gastric Cancer in Chile (2018–2022): Joinpoint Regression Analysis with Demographic Adjustment to the 2024 Census”**
+> **"Time trends in hospital discharges for gastric cancer in Chile, 2018–2022: age-adjusted temporal analysis based on the 2024 Census"**
 
 ---
 
@@ -13,11 +13,10 @@ This repository contains a **reproducible Python pipeline** to:
 - Consolidate hospital discharge microdata from DEIS‑MINSAL (ICD‑10 C16).
 - Harmonise age groups (decades → quinquennia) using fractional weights.
 - Build the analytical tables used in the manuscript:
-
-- **Table A** — Descriptive counts (quinquennium × sex × year).
-- **Table 1** — Crude discharge rates per 100,000 inhabitants (World Bank denominators).
-- **Table 2** — Age‑adjusted rates + Flanders (1984) standard error using the 2024 Census as reference population.
-- **Joinpoint file** — Input for the Joinpoint Regression Program v6.0.1 (NCI, 2026).
+  - **Table A** — Descriptive counts (quinquennium × sex × year).
+  - **Table 1** — Crude discharge rates per 100,000 inhabitants (World Bank denominators).
+  - **Table 2** — Age‑adjusted rates + Stang & Gianicolo (2025) standard errors using the 2024 Census as reference population.
+  - **Joinpoint file** — Input for the Joinpoint Regression Program v6.0.1 (NCI, 2026).
 
 The script **does not perform inferential analysis** (Joinpoint regression); it only prepares the inputs for Joinpoint.
 
@@ -43,12 +42,12 @@ Available at: <https://deis.minsal.cl>
 
 Key variables used in the analytical tables:
 
-| Variable                   | Description                                                       | Original coding                     |
-|---------------------------|-------------------------------------------------------------------|-------------------------------------|
-| `GRUPO_EDAD`              | Patient age group, recoded into standard quinquennia             | Categorical (see methods note)      |
-| `GLOSA_REGION_RESIDENCIA` | Region of residence                                               | Text                                |
-| `CONDICION_EGRESO`        | Condition at discharge (in‑hospital lethality)                   | 1 = Alive, 2 = Dead                 |
-| `SEXO`                    | Patient sex                                                       | HOMBRE / MUJER                      |
+| Variable | Description | Original coding |
+|---|---|---|
+| `GRUPO_EDAD` | Patient age group, recoded into standard quinquennia | Categorical (see methods note) |
+| `GLOSA_REGION_RESIDENCIA` | Region of residence | Text |
+| `CONDICION_EGRESO` | Condition at discharge (in‑hospital lethality) | 1 = Alive, 2 = Dead |
+| `SEXO` | Patient sex | HOMBRE / MUJER |
 
 The final tables present these variables stratified by **sex** (GENERAL, MALE, FEMALE) and **year** (2018, 2019, 2020, 2021, 2022, `TOTAL_5Y`), with counts and rates per category.
 
@@ -128,8 +127,8 @@ The script will:
 - Load microdata filtered to ICD‑10 C16 principal diagnosis.
 - Expand records into quinquennia (weights 0.5 for decennial codes).
 - Compute crude rates (Table 1) using World Bank denominators (2018–2022).
-- Compute age‑adjusted rates and standard errors (Table 2) using the 2024 Census.
-- Generate a `.txt` file ready to import into **Joinpoint v6.0.1** as “Rates with Standard Errors”.
+- Compute age‑adjusted rates and standard errors (Table 2) using the 2024 Census and the Stang & Gianicolo (2025) method.
+- Generate a `.txt` file ready to import into **Joinpoint v6.0.1** as "Rates with Standard Errors".
 
 All outputs are written to `outputs/` (or the current directory, depending on configuration).
 
@@ -139,29 +138,29 @@ All outputs are written to `outputs/` (or the current directory, depending on co
 
 The main script is organised into the following sections:
 
-- **Section 3 — Population data (hardcoded)**  
+- **Section 3 — Population data (hardcoded)**
   - **World Bank** denominators (Chile, 2018–2022) by sex and age group.
   - **2024 Census** (INE Chile) reference population by sex and age group.
 
-- **Section 4 — Age mapping**  
+- **Section 4 — Age mapping**
   - `DEIS_TO_QUINQUENNIUM`: maps `GRUPO_EDAD` categories to one or two quinquennia (`WEIGHT = 1.0` or `0.5`).
   - `QUINQUENNIUM_TO_AGEGROUP`: maps each quinquennium to an analytical group (`0–14`, `15–64`, `65+`).
 
-- **Section 7 — Table A (descriptive counts)**  
+- **Section 7 — Table A (descriptive counts)**
   - Builds a matrix of counts by sex, variable, and category (age, region, discharge condition).
 
-- **Section 8 — Table 1 (crude rates)**  
+- **Section 8 — Table 1 (crude rates)**
   - Numerator: `WEIGHT.sum()` per stratum.
   - Denominator: World Bank population.
   - Unit: **per 100,000 inhabitants**.
   - `2018–2022` column: arithmetic mean of the five annual crude rates.
 
-- **Section 9 — Table 2 (age‑adjusted rates + SE)**  
+- **Section 9 — Table 2 (age‑adjusted rates + SE)**
   - Method: **direct age standardisation** against the 2024 Census age distribution.
-  - Variance: Flanders (1984) formula under a Poisson assumption.
+  - Variance: Stang & Gianicolo (2025) formula under a Poisson assumption.
   - Returns adjusted rate and standard error by sex and year.
 
-- **Section 10 — Validation**  
+- **Section 10 — Validation**
   - Report including:
     - Record counts and expansion ratio.
     - Proportion of unmapped age codes.
@@ -169,7 +168,7 @@ The main script is organised into the following sections:
     - Printed crude and adjusted rates for manual auditing.
     - Male/Female crude rate ratio in the ≥65 group.
 
-- **Section 11 — Export**  
+- **Section 11 — Export**
   - Exports all tables to `.csv` and `.xlsx`.
   - Generates `*_table2_for_joinpoint.txt` with columns `Sex`, `Year`, `Rate`, `Standard_Error`.
 
@@ -187,7 +186,7 @@ To reproduce the trend analysis:
    - Input data type: **Rates with Standard Errors**.
    - Rate column: `Rate`.
    - Standard error column: `Standard_Error`.
-   - Variance method: **External (Flanders)**.
+   - Variance method: **External (Stang & Gianicolo)**.
 4. Set analysis options:
    - Maximum number of joinpoints: **0** (n = 5 annual observations).
    - Model selection: **Permutation test** (Kim et al., Stat Med. 2000;19:335–351).
@@ -197,10 +196,9 @@ To reproduce the trend analysis:
 
 ## Citation
 
-If you use this code, please cite the associated study (when available) and this repository. A suggested placeholder citation is:
+If you use this code, please cite the associated dataset and manuscript:
 
-> Marín Loayza ER, Garrido Rodríguez GE, Fuentes Bascuñán NA. Stagnation of Hospital Burden from Gastric Cancer in Chile (2018–2022): Joinpoint Regression Analysis with Demographic Adjustment to the 2024 Census. [Manuscript under review]. Code available at: <https://github.com/edux2122/gastric-cancer-joinpoint-chile>.
-
+> Marín Loayza ER, Aravena Aravena VA, Castro Lara AA, Fuentes Bascuñán NA, Garrido Rodríguez GE, Vergara Retamal FD. Aggregated hospital discharge rates and age-standardization pipeline for gastric cancer in Chile, 2018–2022 [dataset]. V1. Mendeley Data; 2026. doi:10.17632/h2zj8t6dzk.1
 
 ---
 
