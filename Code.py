@@ -840,7 +840,7 @@ def export_results(counts_table: pd.DataFrame,
                                'Adjusted rate*',
                                'SE (Stang & Gianicolo 2025)']].copy()
     jp_df.columns = ['Sex', 'Year', 'Rate', 'Standard_Error']
-    jp_df.to_csv(jp_path, index=False, sep='\\t')
+    jp_df.to_csv(jp_path, index=False, sep='\t')
 
     print("\\n  Exported files:")
     for fname in [
